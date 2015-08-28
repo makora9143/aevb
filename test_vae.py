@@ -115,9 +115,9 @@ def plot_hiddens(model, xs, cs):
 
 
 if __name__ == '__main__':
-    data, model = test_vae.test_vae(
+    data, model = test_vae(
         n_iters=10000,
-        lr=0.01,
+        learning_rate=0.01,
         n_mc_samples=1,
         scale_init=1.,
         dim_h=500,
