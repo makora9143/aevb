@@ -241,6 +241,49 @@ class M1_GVAE(object):
         updates += [(h, h + gparam ** 2) for gparam, h in zip(gparams, hs)]
         return updates
 
+    def RMSProp(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+
+        hs = [theano.shared(np.zeros(
+                    param.get_value(borrow=True).shape
+                ).astype(theano.config.floatX))
+            for param in params]
+
+        beta = 0.9
+
+        updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
+                    for param, gparam, h in zip(params, gparams, hs)]
+        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
+        return updates
+
+    def AdaDelta(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+
+        hs = [theano.shared(np.zeros(
+                    param.get_value(borrow=True).shape
+                ).astype(theano.config.floatX))
+            for param in params]
+
+        vs = [theano.shared(np.zeros(
+                    param.get_value(borrow=True).shape
+                ).astype(theano.config.floatX))
+            for param in params]
+
+        ss = [theano.shared(np.zeros(
+                    param.get_value(borrow=True).shape
+                ).astype(theano.config.floatX))
+            for param in params]
+
+        beta = 0.9
+
+        updates = [(param, param - v)
+                    for param, v in zip(params, vs)]
+        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
+        updates += [(v, (T.sqrt(s) + 1) / (T.sqrt(h) + 1) * gparam) for v, s, h, gparam in zip(vs, ss, hs, gparams)]
+        updates += [(s, beta * s + (1 - beta) * v ** 2) for s, v in zip(ss, vs)]
+
+        return updates
+
     def adam(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
 
@@ -259,14 +302,16 @@ class M1_GVAE(object):
 
         gnma = 0.999
         beta = 0.9
-        weight_decay = 1000 / 50000.
+        # weight_decay = 1000 / 50000.
 
         updates = [
             (param,
              param - learning_rate / (T.sqrt(r / (1 - gnma ** t))) * v / (1 - beta ** t))
              for param, r, v, t  in zip(params, rs, vs, ts)]
-        updates += [(r, gnma * r + (1- gnma) * (gparam - weight_decay * param) ** 2) for param, gparam, r in zip(params, gparams, rs)]
-        updates += [(v, beta * v + (1- beta) * (gparam - weight_decay * param)) for param, gparam, v in zip(params, gparams, vs)]
+        # updates += [(r, gnma * r + (1- gnma) * (gparam - weight_decay * param) ** 2) for param, gparam, r in zip(params, gparams, rs)]
+        # updates += [(v, beta * v + (1- beta) * (gparam - weight_decay * param)) for param, gparam, v in zip(params, gparams, vs)]
+        updates += [(r, gnma * r + (1- gnma) * gparam ** 2) for param, gparam, r in zip(params, gparams, rs)]
+        updates += [(v, beta * v + (1- beta) * gparam) for param, gparam, v in zip(params, gparams, vs)]
         updates += [(t, t + 1) for t in ts]
         return updates
 

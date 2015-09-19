@@ -48,10 +48,9 @@ def test_vae(
             'n_hidden'          : [500, 500],
             'n_mc_sampling'     : n_mc_samples,
             'scale_init'        : scale_init,
-            'nonlinear_q'       : 'softplus',
-            'nonlinear_p'       : 'softplus',
-            'output_f'          : 'sigmoid',
-            'type_px'           : 'bernoulli',
+            'nonlinear_q'       : 'tanh',
+            'nonlinear_p'       : 'tanh',
+            'type_px'           : 'gaussian',
         }
     }
     all_params.update({'adagrad_params': adagrad_params})
@@ -74,8 +73,8 @@ def test_vae(
 
 if __name__ == '__main__':
     data, model = test_vae(
-        n_iters=2000,
-        learning_rate=0.01,
+        n_iters=10000,
+        learning_rate=0.001,
         n_mc_samples=1,
         scale_init=1.,
         dim_z=50,
