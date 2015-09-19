@@ -127,8 +127,8 @@ class M1_GVAE(object):
 
         return {
             'q_mean': q_mean,
-            # 'q_log_var': q_log_var,
-            'q_log_var': 3 * T.tanh(q_log_var) - 1,
+            'q_log_var': q_log_var,
+            # 'q_log_var': 3 * T.tanh(q_log_var) - 1,
             # 'q_log_var': T.clip(q_log_var, -4., 2.),
         }
 
@@ -143,12 +143,12 @@ class M1_GVAE(object):
         p_log_var = self.generate_log_sigma_layer.fprop(layer_out)
 
         return {
-            'p_mean': 0.5 * (T.tanh(p_mean) + 1), # 0 <= mu <= 1
-            'p_log_var': 3 * T.tanh(p_log_var) - 1, # -4 <= log sigma **2 <= 2
+            # 'p_mean': 0.5 * (T.tanh(p_mean) + 1), # 0 <= mu <= 1
+            # 'p_log_var': 3 * T.tanh(p_log_var) - 1, # -4 <= log sigma **2 <= 2
             # 'p_mean': T.clip(p_mean, 0., 1.),
             # 'p_log_var': T.clip(p_log_var, -4., 2.)
-            # 'p_mean': p_mean,
-            # 'p_log_var': p_log_var
+            'p_mean': p_mean,
+            'p_log_var': p_log_var
         }
 
     def encode(self, x):
@@ -192,14 +192,14 @@ class M1_GVAE(object):
                 0.5 * (X - p_mean) ** 2 / (2 * T.exp(p_log_var))
             )
         elif self.type_px == 'bernoulli':
-            log_p_x_given_z = T.sum(X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean), axis=1)
+            log_p_x_given_z = X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean)
 
-        # logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var)
-        # logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
-        logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var, axis=1)
-        logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var), axis=1)
+        logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var)
+        logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
+        # logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var, axis=1)
+        # logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var), axis=1)
 
-        return (T.sum(log_p_x_given_z) + T.sum(logpz - logqz)) / n_samples,
+        return (T.sum(log_p_x_given_z) + logpz - logqz) / n_samples
         # return log_p_x_given_z, logpz, logqz
 
     def fit(self, x_datas):
@@ -210,7 +210,7 @@ class M1_GVAE(object):
         # logpx, logpz, logqz = self.get_expr_lbound(X)
         # L = -T.sum(logpx + logpz + logqz)
         bound = self.get_expr_lbound(X)
-        L = -T.sum(bound)
+        L = -bound
 
         print 'start fitting'
         gparams = T.grad(
