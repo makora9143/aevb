@@ -218,7 +218,8 @@ class M1_GVAE(object):
             wrt=self.model_params_
         )
         updates = self.adagrad(self.model_params_, gparams, self.adagrad_params)
-        self.hist = self.early_stopping(
+        # self.hist = self.early_stopping(
+        self.hist = self.optimize(
             X,
             x_datas,
             self.adagrad_params,
