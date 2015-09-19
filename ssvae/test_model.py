@@ -96,23 +96,5 @@ if __name__ == '__main__':
     misc.imsave('sample.jpg', output_image)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     plt.show()
 # End of Line.
