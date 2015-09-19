@@ -210,7 +210,7 @@ class M1_GVAE(object):
         # logpx, logpz, logqz = self.get_expr_lbound(X)
         # L = -T.sum(logpx + logpz + logqz)
         bound = self.get_expr_lbound(X)
-        L = -bound
+        L = -T.sum(bound)
 
         print 'start fitting'
         gparams = T.grad(
