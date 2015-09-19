@@ -10,6 +10,7 @@ import theano
 
 from vae import GaussianVAE, BernoulliVAE
 from utils import load_data
+from gaussian_vae import M1_GVAE
 
 def test_vae(
     opt='adagrad',
@@ -24,7 +25,7 @@ def test_vae(
 ##################
 # load data
 ##################
-    datasets = load_data('../20150717-/mnist.pkl.gz')
+    datasets = load_data('../../20150717-/mnist.pkl.gz')
 
     train_set_x, train_set_y = datasets
     xs = train_set_x[:10000]
@@ -56,6 +57,7 @@ def test_vae(
 
     if model == 'Gaussian':
         model = GaussianVAE(**all_params)
+        # model = M1_GVAE(**all_params)
     elif model == 'Bernoulli':
         model = BernoulliVAE(**all_params)
 

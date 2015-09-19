@@ -36,8 +36,17 @@ class VariationalAutoencoder(object):
 
         lbound, consts = self._get_expr_lbound(xs_)
         cost = -lbound
+        hoge = theano.function(
+            inputs=[xs_],
+            outputs=[lbound]
+        )
+
+        print hoge(xs)
+        cost = -lbound
 
         model_params_list = [p for p in self.model_params_.values()]
+
+        print T.grad(cost, model_params_list)
 
         if self.sgd_params is not None:
             self.hist = sgd_xs(
@@ -58,7 +67,7 @@ class VariationalAutoencoder(object):
                 xs_,
                 model_params_list,
                 self.adagrad_params,
-                self.rng
+                self.rng,
             )
 
 
@@ -231,6 +240,7 @@ class GaussianVAE(VariationalAutoencoder):
         log_sigma2_z = stats_z['log_sigma2']
         sigma2_z = T.exp(log_sigma2_z)
 
+        # epsilon
         eps = self.rng_th.normal(size=(n_mc_samples, n_samples, dim_z))
         zss = mu_z + T.sqrt(sigma2_z) * eps
 
@@ -238,6 +248,7 @@ class GaussianVAE(VariationalAutoencoder):
         mus_x = stats_x['mu']
         log_sigma2_x = stats_x['log_sigma2']
         sigmas2_x = T.exp(log_sigma2_x)
+        # log p(x|z) = log N(x; mu, sigma**2)
         logp_x_given_z = (
             - 0.5 * T.log(sigmas2_x) - 0.5 * (xs_ - mus_x)**2 / sigmas2_x
         )
@@ -247,7 +258,7 @@ class GaussianVAE(VariationalAutoencoder):
         return (
             0.5 * T.sum(1 + log_sigma2_z - mu_z**2 - sigma2_z) / n_samples + # KL Divergense
             T.sum(logp_x_given_z) / (n_mc_samples * n_samples)
-            ), consts
+        ), consts
 
     def decode(self, zs):
         if self._decode_main is None:
@@ -451,7 +462,7 @@ def sgd_xs(xs, cost, consts, xs_, model_params_, sgd_params, rng):
             if calc_hist == 'minibatch':
                 hist.append((i, cost_minibatch))
             elif calc_hist == 'all':
-                hist.appned((i, pyfunc_cost(xs)))
+                hist.append((i, pyfunc_cost(xs)))
     return hist
 
 def adagrad_xs(xs, cost_, consts_, xs_, model_params_, adagrad_params, rng):
