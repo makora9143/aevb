@@ -86,7 +86,7 @@ if __name__ == '__main__':
         output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*(0):im_size[1]*(1)] = np.array(testX).reshape(im_size)
         testY = [ys[idx]]
         testZ = model.encode(testX, testY)
-        for j in range(11):
+        for j in range(10):
             sampleY = np.zeros((1, 10)).astype(np.float32)
             sampleY[0][j] = 1.
             im = model.decode(testZ, sampleY).reshape(im_size)
