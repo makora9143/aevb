@@ -331,7 +331,7 @@ class M1_VAE(object):
             if np.mod(i, n_mod_history) == 0:
                 valid_error = validate(valid_x)
                 print '%d epoch error: %f' % (i, valid_error)
-                cost_history.append((i, valid_error)
+                cost_history.append((i, valid_error))
         return cost_history
 
     def early_stopping(self, X, x_datas, hyper_params, cost, updates, rng):
