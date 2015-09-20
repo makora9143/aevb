@@ -10,8 +10,7 @@ import theano
 from scipy import misc
 
 from utils import load_data
-from m1_gvae import M1_GVAE
-from m2_vae import M2_VAE
+from m1_vae import M1_VAE
 
 
 def test_vae(
@@ -55,16 +54,10 @@ def test_vae(
     }
     all_params.update({'adagrad_params': adagrad_params})
 
-    model = M1_GVAE(**all_params)
+    model = M1_VAE(**all_params)
     model.fit(xs)
     zs = model.encode(xs)
     xs_recon = model.decode(zs)
-
-
-    # model = M2_VAE(**all_params)
-    # model.fit(xs, ys)
-    # zs = model.encode(xs, ys)
-    # xs_recon = model.decode(zs, ys)
 
     err = np.sum(0.5 * (xs - xs_recon) ** 2) / xs.shape[0]
     print ('Error: %f' % err)
@@ -92,7 +85,7 @@ if __name__ == '__main__':
             sampleZ = np.random.standard_normal((1, 50)).astype(np.float32)
             im = model.decode(sampleZ).reshape(im_size)
             output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*j:im_size[1]*(j+1)] = im
-    misc.imsave('sample.jpg', output_image)
+    misc.imsave('sampleM1.jpg', output_image)
 
 
     plt.show()

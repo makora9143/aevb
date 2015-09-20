@@ -7,7 +7,12 @@ import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
 
-class VAE(object):
+from mlp import Layer
+
+def shared32(x):
+    return theano.shared(x.astype(theano.config.floatX))
+
+class M2_VAE(object):
     def __init__(
         self,
         hyper_params=None,
@@ -30,104 +35,290 @@ class VAE(object):
         self.decode_main = None
         self.encode_main = None
 
+
+    def relu(self, x): return x*(x>0) + 0.01 * x
+    def softplus(self, x): return T.log(T.exp(x) + 1)
+
+    def init_model_params(self, dim_x, dim_y):
+        print 'M2 model params initialize'
+
+        dim_z = self.hyper_params['dim_z']
+        n_hidden = self.hyper_params['n_hidden'] # [500, 500, 500]
+        n_hidden_recognize = n_hidden
+        n_hidden_generate = n_hidden[::-1]
+
+        self.type_px = self.hyper_params['type_px']
+
+        activation = {
+            'tanh': T.tanh,
+            'relu': self.relu,
+            'softplus': self.softplus,
+            'sigmoid': T.nnet.sigmoid,
+            'none': None,
+        }
+
+        self.nonlinear_q = activation[self.hyper_params['nonlinear_q']]
+        self.nonlinear_p = activation[self.hyper_params['nonlinear_p']]
+        if self.type_px == 'bernoulli':
+            output_f = activation['sigmoid']
+        elif self.type_px == 'gaussian':
+            output_f= activation['none']
+
+        # Recognize model
+        self.recognize_layers = [
+            Layer(param_shape=(dim_x, n_hidden_recognize[0]), function=None),
+            Layer(param_shape=(dim_y, n_hidden_recognize[0]), function=None),
+        ]
+        if len(n_hidden_recognize) > 1:
+            self.recognize_layers += [
+                Layer(param_shape=shape, function=self.nonlinear_q)
+                for shape in zip(n_hidden_recognize[:-1], n_hidden_recognize[1:])
+            ]
+        self.recognize_mean_layer = Layer(
+            param_shape=(n_hidden_recognize[-1], dim_z),
+            function=None
+        )
+        self.recognize_log_sigma_layer = Layer(
+            param_shape=(n_hidden_recognize[-1], dim_z),
+            function=None,
+            w_zero=True, b_zero=True
+        )
+
+
+        # Generate Model
+        self.generate_layers = [
+            Layer((dim_z, n_hidden_generate[0]), function=None),
+            Layer((dim_y, n_hidden_generate[0]), function=None),
+        ]
+        if len(n_hidden) > 1:
+            self.generate_layers += [
+                Layer(param_shape=shape, function=self.nonlinear_p)
+                for shape in zip(n_hidden_generate[:-1], n_hidden_generate[1:])
+            ]
+        self.generate_mean_layer = Layer(
+            param_shape=(n_hidden_generate[-1], dim_x),
+            function=output_f
+        )
+        self.generate_log_sigma_layer = Layer(
+            param_shape=(n_hidden_generate[-1], dim_x),
+            function=None,
+            b_zero=True
+        )
+
+        # Add all parameters
+        self.model_params_ = (
+            [param for layer in self.recognize_layers for param in layer.params] +
+            self.recognize_mean_layer.params +
+            self.recognize_log_sigma_layer.params +
+            [param for layer in self.generate_layers for param in layer.params] +
+            self.generate_mean_layer.params
+        )
+
+        if self.type_px == 'gaussian':
+            self.model_params_ += self.generate_log_sigma_layer.params
+
+    def recognize_model(self, X, Y):
+        for i, layer in enumerate(self.recognize_layers):
+            if i == 0:
+                layer_out = layer.fprop(X)
+            elif i == 1:
+                layer_out += layer.fprop(Y)
+                layer_out = self.nonlinear_q(layer_out)
+            else:
+                layer_out = layer.fprop(layer_out)
+
+        q_mean = self.recognize_mean_layer.fprop(layer_out)
+        q_log_var = self.recognize_log_sigma_layer.fprop(layer_out)
+
+        return {
+            'q_mean': q_mean,
+            'q_log_var': q_log_var,
+            # 'q_log_var': 3 * T.tanh(q_log_var) - 1,
+            # 'q_log_var': T.clip(q_log_var, -4., 2.),
+        }
+
+    def generate_model(self, Z, Y):
+        for i, layer in enumerate(self.generate_layers):
+            if i == 0:
+                layer_out = layer.fprop(Z)
+            elif i == 1:
+                layer_out += layer.fprop(Y)
+                layer_out = self.nonlinear_p(layer_out)
+            else:
+                layer_out = layer.fprop(layer_out)
+
+        p_mean = self.generate_mean_layer.fprop(layer_out)
+        p_log_var = self.generate_log_sigma_layer.fprop(layer_out)
+
+        return {
+            # 'p_mean': 0.5 * (T.tanh(p_mean) + 1), # 0 <= mu <= 1
+            # 'p_log_var': 3 * T.tanh(p_log_var) - 1, # -4 <= log sigma **2 <= 2
+            # 'p_mean': T.clip(p_mean, 0., 1.),
+            # 'p_log_var': T.clip(p_log_var, -4., 2.)
+            'p_mean': p_mean,
+            'p_log_var': p_log_var
+        }
+
+    def encode(self, x, y):
+        if self.encode_main is None:
+            X = T.matrix()
+            Y = T.matrix()
+            self.encode_main = theano.function(
+                inputs=[X, Y],
+                outputs=self.recognize_model(X, Y)['q_mean']
+            )
+        return self.encode_main(x, y)
+
+    def decode(self, z, y):
+        if self.decode_main is None:
+            Z = T.matrix()
+            Y = T.matrix()
+            self.decode_main = theano.function(
+                inputs=[Z, Y],
+                outputs=self.generate_model(Z, Y)['p_mean']
+            )
+        return self.decode_main(z, y)
+
+    def get_expr_lbound(self, X, Y):
+        n_samples = X.shape[0]
+
+        recognized_zs = self.recognize_model(X, Y)
+        q_mean = recognized_zs['q_mean']
+        q_log_var = recognized_zs['q_log_var']
+
+        eps = self.rng_noise.normal(size=q_mean.shape).astype(theano.config.floatX)
+        # T.exp(0.5 * q_log_var) = std
+        # z = mean_z + std * epsilon
+        z_tilda = q_mean + T.exp(0.5 * q_log_var) * eps
+
+        generated_x = self.generate_model(z_tilda, Y)
+        p_mean = generated_x['p_mean']
+        p_log_var = generated_x['p_log_var']
+
+        if self.type_px == 'gaussian':
+            log_p_x_given_z = (
+                - 0.5 * np.log(2 * np.pi) -
+                0.5 * p_log_var -
+                0.5 * (X - p_mean) ** 2 / (2 * T.exp(p_log_var))
+            )
+        elif self.type_px == 'bernoulli':
+            log_p_x_given_z = X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean)
+
+        logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var)
+        logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
+        # logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var, axis=1)
+        # logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var), axis=1)
+
+        return (T.sum(log_p_x_given_z) + logpz - logqz) / n_samples
+        # return log_p_x_given_z, logpz, logqz
+
     def fit(self, x_datas, y_labels):
         X = T.matrix()
         Y = T.matrix()
         self.rng_noise = RandomStreams(self.hyper_params['rng_seed'])
         self.init_model_params(dim_x=x_datas.shape[1], dim_y=y_labels.shape[1])
 
-        lbound, consts = self.get_expr_lbound(X, Y)
-        cost = -lbound
+        # logpx, logpz, logqz = self.get_expr_lbound(X)
+        # L = -T.sum(logpx + logpz + logqz)
+        bound = self.get_expr_lbound(X, Y)
+        L = -bound
 
-        model_params_list = [param for param in self.model_params_.values()]
-
-        if self.sgd_params is not None:
-            self.hist = self.sgd_calc(
-                x_datas,
-                y_labels,
-                cost,
-                consts,
-                X,
-                Y,
-                model_params_list,
-                self.sgd_params,
-                self.rng
-            )
-        else:
-            self.hist = self.adagrad_calc(
-                x_datas,
-                y_labels,
-                cost,
-                consts,
-                X,
-                Y,
-                model_params_list,
-                self.adagrad_params,
-                self.rng
-            )
-
-    def sgd_calc(self, x_datas, y_labels, cost, consts, X, Y, model_params, hyper_params, rng):
-        n_iters = hyper_params['n_iters']
-        learning_rate = hyper_params['learning_rate']
-        minibatch_size = hyper_params['minibatch_size']
-        n_mod_history = hyper_params['n_mod_history']
-        calc_history = hyper_params['calc_history']
-
+        print 'start fitting'
         gparams = T.grad(
-            cost=cost,
-            wrt=model_params,
-            consider_constant=consts
+            cost=L,
+            wrt=self.model_params_
         )
-        updates = [(param, param - learning_rate * gparam)
-                    for param, gparam in zip(model_params, gparams)]
-
-        train = theano.function(
-            inputs=[X],
-            outputs=cost,
-            updates=updates
-        )
-
-        validate = theano.function(
-            inputs=[X],
-            outputs=cost
+        updates = self.adagrad(self.model_params_, gparams, self.adagrad_params)
+        # self.hist = self.early_stopping(
+        self.hist = self.optimize(
+            X,
+            Y,
+            x_datas,
+            y_labels,
+            self.adagrad_params,
+            L,
+            updates,
+            self.rng,
         )
 
-        n_samples = x_datas.shape[0]
-        cost_history = []
-
-        for i in xrange(n_iters):
-            ixs = rng.permutation(n_samples)[:minibatch_size]
-            minibatch_cost = train(x_datas[ixs])
-
-            if np.mod(i, n_mod_history) == 0:
-                print '%d epoch error: %f' % (i, minibatch_cost)
-                if calc_history == 'minibatch':
-                    cost_history.append((i, minibatch_cost))
-                else:
-                    cost_history.append((i, validate(x_datas[ixs])))
-        return cost_history
-
-
-    def adagrad_calc(self, x_datas, y_labels, cost, consts, X, Y, model_params, hyper_params, rng):
-        n_iters = hyper_params['n_iters']
+    def adagrad(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
-        minibatch_size = hyper_params['minibatch_size']
-        n_mod_history = hyper_params['n_mod_history']
-        calc_history = hyper_params['calc_history']
 
-        hs = [theano.shared(np.ones(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in model_params]
+        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
+            for param in params]
 
-        gparams = T.grad(
-            cost=cost,
-            wrt=model_params,
-            consider_constant=consts
-        )
-        updates = [(param, param - learning_rate / T.sqrt(h) * gparam)
-                    for param, gparam, h in zip(model_params, gparams, hs)]
+        updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
+                    for param, gparam, h in zip(params, gparams, hs)]
         updates += [(h, h + gparam ** 2) for gparam, h in zip(gparams, hs)]
+        return updates
+
+    def RMSProp(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+
+        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
+            for param in params]
+
+        beta = 0.9
+
+        updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
+                    for param, gparam, h in zip(params, gparams, hs)]
+        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
+        return updates
+
+    def AdaDelta(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+
+        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
+              for param in params]
+
+        vs = [shared32(np.zeros(param.get_value(borrow=True).shape))
+              for param in params]
+
+        ss = [shared32(np.zeros(param.get_value(borrow=True).shape))
+              for param in params]
+
+        beta = 0.9
+
+        updates = [(param, param - v)
+                    for param, v in zip(params, vs)]
+        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
+        updates += [(v, (T.sqrt(s) + 1) / (T.sqrt(h) + 1) * gparam) for v, s, h, gparam in zip(vs, ss, hs, gparams)]
+        updates += [(s, beta * s + (1 - beta) * v ** 2) for s, v in zip(ss, vs)]
+
+        return updates
+
+    def adam(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+
+        rs = [shared32(np.ones(param.get_value(borrow=True).shape))
+              for param in params]
+        vs = [shared32(np.ones(param.get_value(borrow=True).shape))
+              for param in params]
+        ts = [shared32(np.ones(param.get_value(borrow=True).shape))
+              for param in params]
+
+        gnma = 0.999
+        beta = 0.9
+        # weight_decay = 1000 / 50000.
+
+        updates = [
+            (param,
+             param - learning_rate / (T.sqrt(r / (1 - gnma ** t))) * v / (1 - beta ** t))
+             for param, r, v, t  in zip(params, rs, vs, ts)]
+        # updates += [(r, gnma * r + (1- gnma) * (gparam - weight_decay * param) ** 2) for param, gparam, r in zip(params, gparams, rs)]
+        # updates += [(v, beta * v + (1- beta) * (gparam - weight_decay * param)) for param, gparam, v in zip(params, gparams, vs)]
+        updates += [(r, gnma * r + (1- gnma) * gparam ** 2) for param, gparam, r in zip(params, gparams, rs)]
+        updates += [(v, beta * v + (1- beta) * gparam) for param, gparam, v in zip(params, gparams, vs)]
+        updates += [(t, t + 1) for t in ts]
+        return updates
+
+
+
+    def optimize(self, X, Y, x_datas, y_labels,hyper_params, cost, updates, rng):
+        n_iters = hyper_params['n_iters']
+        minibatch_size = hyper_params['minibatch_size']
+        n_mod_history = hyper_params['n_mod_history']
+        calc_history = hyper_params['calc_history']
 
         train = theano.function(
             inputs=[X, Y],
@@ -146,6 +337,7 @@ class VAE(object):
         for i in xrange(n_iters):
             ixs = rng.permutation(n_samples)[:minibatch_size]
             minibatch_cost = train(x_datas[ixs], y_labels[ixs])
+            # print minibatch_cost
 
             if np.mod(i, n_mod_history) == 0:
                 print '%d epoch error: %f' % (i, minibatch_cost)
@@ -155,161 +347,50 @@ class VAE(object):
                     cost_history.append((i, validate(x_datas[ixs], y_labels[ixs])))
         return cost_history
 
-class M2_VAE(VAE):
-    def init_model_params(self, dim_x, dim_y):
-        if self.model_params is not None:
-            print 'model_params is not None'
-            w1 = self.model_params['w1'].astype(theano.config.floatX)
-            w2 = self.model_params['w2'].astype(theano.config.floatX)
-            w3 = self.model_params['w3'].astype(theano.config.floatX)
-            w4 = self.model_params['w4'].astype(theano.config.floatX)
-            b1 = self.model_params['b1'].astype(theano.config.floatX)
-            b2 = self.model_params['b2'].astype(theano.config.floatX)
-            b3 = self.model_params['b3'].astype(theano.config.floatX)
+    def early_stopping(self, X, x_datas, hyper_params, cost, updates, rng):
+        n_iters = hyper_params['n_iters']
+        minibatch_size = hyper_params['minibatch_size']
+        n_mod_history = hyper_params['n_mod_history']
+        calc_history = hyper_params['calc_history']
 
-            w5 = self.model_params['w5'].astype(theano.config.floatX)
-            w6 = self.model_params['w6'].astype(theano.config.floatX)
-            w7 = self.model_params['w7'].astype(theano.config.floatX)
-            w8 = self.model_params['w8'].astype(theano.config.floatX)
-            b4 = self.model_params['b3'].astype(theano.config.floatX)
-            b5 = self.model_params['b3'].astype(theano.config.floatX)
-            b6 = self.model_params['b3'].astype(theano.config.floatX)
-        else:
-            print 'model_params is None'
-            dim_z = self.hyper_params['dim_z']
-            # dim_y = self.hyper_params['dim_y']
-            dim_h_generate = self.hyper_params['dim_h_generate']
-            dim_h_recognize = self.hyper_params['dim_h_recognize']
-
-            N = lambda size: self.rng.normal(
-                scale=self.hyper_params['scale_init'],
-                size=size).astype(theano.config.floatX)
-            U = lambda size: self.rng.uniform(
-                low=-np.sqrt(6. / np.sum(size)),
-                high=np.sqrt(6. / np.sum(size)),
-                size=size).astype(theano.config.floatX)
-
-            w1 = U((dim_z, dim_h_generate))
-            w2 = U((dim_y, dim_h_generate))
-            w3 = U((dim_h_generate, dim_x))
-            w4 = U((dim_h_generate, dim_x))
-            b1 = N((dim_h_generate,))
-            b2 = N((dim_x,))
-            b3 = N((dim_x,))
-
-            w5 = U((dim_x, dim_h_recognize))
-            w6 = U((dim_y, dim_h_recognize))
-            w7 = U((dim_h_recognize, dim_z))
-            w8 = U((dim_h_recognize, dim_z))
-            b4 = N((dim_h_recognize,))
-            b5 = N((dim_z,))
-            b6 = N((dim_z,))
-
-        self.model_params_ = {
-            'w1': theano.shared(w1),
-            'w2': theano.shared(w2),
-            'w3': theano.shared(w3),
-            'w4': theano.shared(w4),
-            'b1': theano.shared(b1),
-            'b2': theano.shared(b2),
-            'b3': theano.shared(b3),
-
-            'w5': theano.shared(w5),
-            'w6': theano.shared(w6),
-            'w7': theano.shared(w7),
-            'w8': theano.shared(w8),
-            'b4': theano.shared(b4),
-            'b5': theano.shared(b5),
-            'b6': theano.shared(b6),
-        }
-
-    def generate_model(self, Z, Y):
-        w1 = self.model_params_['w1']
-        w2 = self.model_params_['w2']
-        w3 = self.model_params_['w3']
-        w4 = self.model_params_['w4']
-        b1 = self.model_params_['b1']
-        b2 = self.model_params_['b2']
-        b3 = self.model_params_['b3']
-
-        H = T.tanh(T.dot(Z, w1) + T.dot(Y, w2) + b1)
-
-        return {
-            'mu': 0.5 * (T.tanh(T.dot(H, w3) + b2) + 1),
-            'log_sigma2': 3 * T.tanh(T.dot(H, w4) + b3) - 1
-        }
-
-    def recognize_model(self, X, Y):
-        w5 = self.model_params_['w5']
-        w6 = self.model_params_['w6']
-        w7 = self.model_params_['w7']
-        w8 = self.model_params_['w8']
-        b4 = self.model_params_['b4']
-        b5 = self.model_params_['b5']
-        b6 = self.model_params_['b6']
-
-        H = T.tanh(T.dot(X, w5) + T.dot(Y, w6) + b4)
-
-        return {
-            'mu': T.dot(H, w7) + b5,
-            'log_sigma2': T.dot(H, w8) + b6
-        }
-
-    def decode(self, z, y):
-        if self.decode_main is None:
-            Z = T.matrix()
-            Y = T.matrix()
-            self.decode_main = theano.function(
-                inputs=[Z, Y],
-                outputs=self.generate_model(Z, Y)['mu']
-            )
-        return self.decode_main(z, y)
-
-    def encode(self, x, y):
-        if self.encode_main is None:
-            X = T.matrix()
-            Y = T.matrix()
-            self.encode_main = theano.function(
-                inputs=[X, Y],
-                outputs=self.recognize_model(X, Y)['mu']
-            )
-        return self.encode_main(x, y)
-
-    def get_expr_lbound(self, X, Y):
-        n_mc_sampling = self.hyper_params['n_mc_sampling']
-        n_samples = X.shape[0]
-        # n_labeled_samples = Y.shape[0]
-        # n_unlabeled_samples = n_samples - n_labeled_samples
-        dim_z = self.hyper_params['dim_z']
-
-        stats_z = self.recognize_model(X, Y)
-        mu_z = stats_z['mu']
-        log_sigma2_z = stats_z['log_sigma2']
-        sigma2_z = T.exp(log_sigma2_z)
-
-        eps = self.rng_noise.normal(size=(n_mc_sampling, n_samples, dim_z))
-        ZS = mu_z + T.sqrt(sigma2_z) * eps
-
-        stats_x = self.generate_model(ZS, Y)
-        mu_x = stats_x['mu']
-        log_sigma2_x = stats_x['log_sigma2']
-        sigma2_x = T.exp(log_sigma2_x)
-
-        log_p_x_given_yz = (
-            # - 0.5 * np.log(2 * np.pi) - 0.5 * T.log(sigma2_x) - 0.5 * (X - mu_x) ** 2 / sigma2_x
-            - 0.5 * T.log(sigma2_x) - 0.5 * (X - mu_x) ** 2 / sigma2_x
+        train = theano.function(
+            inputs=[X],
+            outputs=cost,
+            updates=updates
         )
 
-        consts = []
+        validate = theano.function(
+            inputs=[X],
+            outputs=cost
+        )
 
-        return (
-            0.5 * T.sum(1 + log_sigma2_z - mu_z ** 2 - sigma2_z) / n_samples +
-            T.sum(log_p_x_given_yz) / (n_mc_sampling * n_samples)
+        n_samples = x_datas.shape[0]
+        cost_history = []
+        best_params = []
+        valid_best_error = np.inf
+        best_iter = 0
+        patient = 0
 
-        ), consts
-
-
-
+        for i in xrange(1000000):
+            ixs = rng.permutation(n_samples)[:minibatch_size]
+            minibatch_cost = train(x_datas[ixs])
+            if np.mod(i, n_mod_history) == 0:
+                print '%d epoch error: %f' % (i, minibatch_cost)
+                if calc_history == 'minibatch':
+                    cost_history.append((i, minibatch_cost))
+                else:
+                    cost_history.append((i, validate(x_datas[ixs])))
+                valid_cost = validate(x_datas)
+                if valid_cost < valid_best_error:
+                    patient = 0
+                    best_params = self.model_params_
+                    best_iter = i
+                else:
+                    patient += 1
+                if patient > 1000:
+                    break
+        self.model_params_ = best_params
+        return cost_history
 
 
 

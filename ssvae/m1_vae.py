@@ -10,9 +10,9 @@ from theano.tensor.shared_randomstreams import RandomStreams
 from mlp import Layer
 
 def shared32(x):
-    return theano.shared(x).astype(theano.config.floatX)
+    return theano.shared(x.astype(theano.config.floatX))
 
-class M1_GVAE(object):
+class M1_VAE(object):
     def __init__(
         self,
         hyper_params=None,
@@ -66,7 +66,7 @@ class M1_GVAE(object):
 
         # Recognize model
         self.recognize_layers = [
-            Layer(param_shape=(dim_x, n_hidden[0]), function=nonlinear_q)
+            Layer(param_shape=(dim_x, n_hidden_recognize[0]), function=nonlinear_q)
         ]
         if len(n_hidden_recognize) > 1:
             self.recognize_layers += [
@@ -94,11 +94,11 @@ class M1_GVAE(object):
                 for shape in zip(n_hidden_generate[:-1], n_hidden_generate[1:])
             ]
         self.generate_mean_layer = Layer(
-            param_shape=(n_hidden[-1], dim_x),
+            param_shape=(n_hidden_generate[-1], dim_x),
             function=output_f
         )
         self.generate_log_sigma_layer = Layer(
-            param_shape=(n_hidden[-1], dim_x),
+            param_shape=(n_hidden_generate[-1], dim_x),
             function=None,
             b_zero=True
         )
@@ -231,9 +231,7 @@ class M1_GVAE(object):
     def adagrad(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
 
-        hs = [theano.shared(np.zeros(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
+        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
             for param in params]
 
         updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
@@ -244,9 +242,7 @@ class M1_GVAE(object):
     def RMSProp(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
 
-        hs = [theano.shared(np.zeros(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
+        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
             for param in params]
 
         beta = 0.9
@@ -259,20 +255,14 @@ class M1_GVAE(object):
     def AdaDelta(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
 
-        hs = [theano.shared(np.zeros(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in params]
+        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
+              for param in params]
 
-        vs = [theano.shared(np.zeros(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in params]
+        vs = [shared32(np.zeros(param.get_value(borrow=True).shape))
+              for param in params]
 
-        ss = [theano.shared(np.zeros(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in params]
+        ss = [shared32(np.zeros(param.get_value(borrow=True).shape))
+              for param in params]
 
         beta = 0.9
 
@@ -287,18 +277,12 @@ class M1_GVAE(object):
     def adam(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
 
-        rs = [theano.shared(np.ones(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in params]
-        vs = [theano.shared(np.ones(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in params]
-        ts = [theano.shared(np.ones(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in params]
+        rs = [shared32(np.ones(param.get_value(borrow=True).shape))
+              for param in params]
+        vs = [shared32(np.ones(param.get_value(borrow=True).shape))
+              for param in params]
+        ts = [shared32(np.ones(param.get_value(borrow=True).shape))
+              for param in params]
 
         gnma = 0.999
         beta = 0.9
