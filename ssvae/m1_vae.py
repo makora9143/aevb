@@ -38,6 +38,7 @@ class M1_VAE(object):
 
     def relu(self, x): return x*(x>0) + 0.01 * x
     def softplus(self, x): return T.log(T.exp(x) + 1)
+    def identify(self, x): return x
 
     def init_model_params(self, dim_x):
         print 'M1 model params initialize'
@@ -54,7 +55,7 @@ class M1_VAE(object):
             'relu': self.relu,
             'softplus': self.softplus,
             'sigmoid': T.nnet.sigmoid,
-            'none': None,
+            'none': self.identify,
         }
 
         nonlinear_q = activation[self.hyper_params['nonlinear_q']]
@@ -75,11 +76,11 @@ class M1_VAE(object):
             ]
         self.recognize_mean_layer = Layer(
             param_shape=(n_hidden_recognize[-1], dim_z),
-            function=None
+            function=self.identify
         )
-        self.recognize_log_sigma_layer = Layer(
+        self.recognize_log_var_layer = Layer(
             param_shape=(n_hidden_recognize[-1], dim_z),
-            function=None,
+            function=self.identify,
             w_zero=True, b_zero=True
         )
 
@@ -97,9 +98,9 @@ class M1_VAE(object):
             param_shape=(n_hidden_generate[-1], dim_x),
             function=output_f
         )
-        self.generate_log_sigma_layer = Layer(
+        self.generate_log_var_layer = Layer(
             param_shape=(n_hidden_generate[-1], dim_x),
-            function=None,
+            function=self.identify,
             b_zero=True
         )
 
@@ -107,13 +108,13 @@ class M1_VAE(object):
         self.model_params_ = (
             [param for layer in self.recognize_layers for param in layer.params] +
             self.recognize_mean_layer.params +
-            self.recognize_log_sigma_layer.params +
+            self.recognize_log_var_layer.params +
             [param for layer in self.generate_layers for param in layer.params] +
             self.generate_mean_layer.params
         )
 
         if self.type_px == 'gaussian':
-            self.model_params_ += self.generate_log_sigma_layer.params
+            self.model_params_ += self.generate_log_var_layer.params
 
     def recognize_model(self, X):
         for i, layer in enumerate(self.recognize_layers):
@@ -123,7 +124,7 @@ class M1_VAE(object):
                 layer_out = layer.fprop(layer_out)
 
         q_mean = self.recognize_mean_layer.fprop(layer_out)
-        q_log_var = self.recognize_log_sigma_layer.fprop(layer_out)
+        q_log_var = self.recognize_log_var_layer.fprop(layer_out)
 
         return {
             'q_mean': q_mean,
@@ -140,7 +141,7 @@ class M1_VAE(object):
                 layer_out = layer.fprop(layer_out)
 
         p_mean = self.generate_mean_layer.fprop(layer_out)
-        p_log_var = self.generate_log_sigma_layer.fprop(layer_out)
+        p_log_var = self.generate_log_var_layer.fprop(layer_out)
 
         return {
             # 'p_mean': 0.5 * (T.tanh(p_mean) + 1), # 0 <= mu <= 1
@@ -176,7 +177,7 @@ class M1_VAE(object):
         q_mean = recognized_zs['q_mean']
         q_log_var = recognized_zs['q_log_var']
 
-        eps = self.rng_noise.normal(size=q_mean.shape).astype(theano.config.floatX)
+        eps = self.rng_noise.normal(avg=0., std=1., size=q_mean.shape).astype(theano.config.floatX)
         # T.exp(0.5 * q_log_var) = std
         # z = mean_z + std * epsilon
         z_tilda = q_mean + T.exp(0.5 * q_log_var) * eps
@@ -201,7 +202,7 @@ class M1_VAE(object):
         D_KL = (logpz - logqz) / n_samples
         recon_error = T.sum(log_p_x_given_z) / n_samples
 
-        return D_KL, recon_error
+        return D_KL, recon_error, z_tilda
         # return log_p_x_given_z, logpz, logqz
 
     def fit(self, x_datas):
@@ -211,15 +212,17 @@ class M1_VAE(object):
 
         # logpx, logpz, logqz = self.get_expr_lbound(X)
         # L = -T.sum(logpx + logpz + logqz)
-        D_KL, recon_error = self.get_expr_lbound(X)
+        D_KL, recon_error, z = self.get_expr_lbound(X)
         L = -(D_KL + recon_error)
+
 
         print 'start fitting'
         gparams = T.grad(
             cost=L,
             wrt=self.model_params_
         )
-        updates = self.adagrad(self.model_params_, gparams, self.adagrad_params)
+
+        updates = self.sgd(self.model_params_, gparams, self.adagrad_params)
         # self.hist = self.early_stopping(
         self.hist = self.optimize(
             X,
@@ -230,7 +233,16 @@ class M1_VAE(object):
             self.rng,
             D_KL,
             recon_error,
+            z
         )
+
+    def sgd(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+
+        updates = [(param, param - learning_rate * gparam)
+                    for param, gparam in zip(params, gparams)]
+
+        return updates
 
     def adagrad(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
@@ -305,7 +317,7 @@ class M1_VAE(object):
 
 
 
-    def optimize(self, X, x_datas, hyper_params, cost, updates, rng, D_KL, recon_error):
+    def optimize(self, X, x_datas, hyper_params, cost, updates, rng, D_KL, recon_error,z):
         n_iters = hyper_params['n_iters']
         minibatch_size = hyper_params['minibatch_size']
         n_mod_history = hyper_params['n_mod_history']
@@ -324,6 +336,10 @@ class M1_VAE(object):
             inputs=[X],
             outputs=[cost, D_KL, recon_error]
         )
+        hoge = theano.function(
+            inputs=[X],
+            outputs=[z]
+        )
 
         n_samples = train_x.shape[0]
         cost_history = []
@@ -334,7 +350,8 @@ class M1_VAE(object):
         for i in xrange(n_iters):
             ixs = rng.permutation(n_samples)
             for j in xrange(0, n_samples, minibatch_size):
-                cost, D_KL, recon_error = train(x_datas[j:j+minibatch_size])
+                cost, D_KL, recon_error = train(train_x[j:j+minibatch_size])
+                # print np.sum(hoge(train_x[:1])[0])
                 total_cost += cost
                 total_dkl += D_KL
                 total_recon_error += recon_error
