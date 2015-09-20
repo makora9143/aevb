@@ -198,8 +198,10 @@ class M1_VAE(object):
         logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
         # logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var, axis=1)
         # logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var), axis=1)
+        D_KL = (logpz - logqz) / n_samples
+        recon_error = T.sum(log_p_x_given_z) / n_samples
 
-        return (T.sum(log_p_x_given_z) + logpz - logqz) / n_samples
+        return D_KL, recon_error
         # return log_p_x_given_z, logpz, logqz
 
     def fit(self, x_datas):
@@ -209,8 +211,8 @@ class M1_VAE(object):
 
         # logpx, logpz, logqz = self.get_expr_lbound(X)
         # L = -T.sum(logpx + logpz + logqz)
-        bound = self.get_expr_lbound(X)
-        L = -bound
+        D_KL, recon_error = self.get_expr_lbound(X)
+        L = -(D_KL + recon_error)
 
         print 'start fitting'
         gparams = T.grad(
@@ -226,6 +228,8 @@ class M1_VAE(object):
             L,
             updates,
             self.rng,
+            D_KL,
+            recon_error,
         )
 
     def adagrad(self, params, gparams, hyper_params):
@@ -301,7 +305,7 @@ class M1_VAE(object):
 
 
 
-    def optimize(self, X, x_datas, hyper_params, cost, updates, rng):
+    def optimize(self, X, x_datas, hyper_params, cost, updates, rng, D_KL, recon_error):
         n_iters = hyper_params['n_iters']
         minibatch_size = hyper_params['minibatch_size']
         n_mod_history = hyper_params['n_mod_history']
@@ -309,30 +313,39 @@ class M1_VAE(object):
 
         train_x = x_datas[:50000]
         valid_x = x_datas[50000:]
-        print len(train_x)
-        print len(valid_x)
+
         train = theano.function(
             inputs=[X],
-            outputs=cost,
+            outputs=[cost, D_KL, recon_error],
             updates=updates
         )
 
         validate = theano.function(
             inputs=[X],
-            outputs=cost
+            outputs=[cost, D_KL, recon_error]
         )
 
         n_samples = train_x.shape[0]
         cost_history = []
 
+        total_cost = 0
+        total_dkl = 0
+        total_recon_error = 0
         for i in xrange(n_iters):
             ixs = rng.permutation(n_samples)
             for j in xrange(0, n_samples, minibatch_size):
-                minibatch_cost = train(x_datas[j:j+minibatch_size])
+                cost, D_KL, recon_error = train(x_datas[j:j+minibatch_size])
+                total_cost += cost
+                total_dkl += D_KL
+                total_recon_error += recon_error
 
             if np.mod(i, n_mod_history) == 0:
-                valid_error = validate(valid_x)
-                print '%d epoch error: %f' % (i, valid_error)
+                num = n_samples / minibatch_size
+                print ('%d epoch train D_KL error: %.3f,\tReconstruction error: %.3f,\ttotal error: %.3f' %
+                      (i, total_dkl / num, total_recon_error / num, total_cost / num))
+                total_cost = 0
+                valid_error, valid_dkl, valid_recon_error = validate(valid_x)
+                print '\tvalid D_KL error: %.3f,\tReconstruction error: %.3f,\ttotal error: %.3f' % (valid_dkl, valid_recon_error, valid_error)
                 cost_history.append((i, valid_error))
         return cost_history
 

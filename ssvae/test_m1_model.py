@@ -27,8 +27,6 @@ def test_vae(
     train_x, train_y = train_set
     validate_x, validate_y = validate_set
     xs = np.r_[train_x, validate_x]
-    print xs.shape
-
     adagrad_params = {
         'learning_rate' : learning_rate,
         'n_iters'       : n_iters,
