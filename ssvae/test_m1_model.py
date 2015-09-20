@@ -24,7 +24,7 @@ def test_vae(
     train_x, train_y = train_set
     validate_x, validate_y = validate_set
     xs = np.r_[train_x, validate_x]
-    adagrad_params = {
+    optimize_params = {
         'learning_rate' : learning_rate,
         'n_iters'       : n_iters,
         'minibatch_size': 1000,
@@ -44,9 +44,10 @@ def test_vae(
             'nonlinear_q'       : 'tanh',
             'nonlinear_p'       : 'tanh',
             'type_px'           : 'gaussian',
+            'optimizer'         : 'adagrad'
         }
     }
-    all_params.update({'adagrad_params': adagrad_params})
+    all_params.update({'optimize_params': optimize_params})
 
     model = M1_VAE(**all_params)
     model.fit(xs)
@@ -65,7 +66,7 @@ if __name__ == '__main__':
         n_mc_samples=1,
         scale_init=1.,
         dim_z=50,
-    )
+        )
     hist = np.vstack(model.hist)
     plt.plot(hist[:, 0], hist[:, 1])
     # print model.encode(xs[0], ys[0])

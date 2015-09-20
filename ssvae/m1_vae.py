@@ -16,17 +16,12 @@ class M1_VAE(object):
     def __init__(
         self,
         hyper_params=None,
-        sgd_params=None,
-        adagrad_params=None,
+        optimize_params=None,
         model_params=None
     ):
 
-        if (sgd_params is not None) and (adagrad_params is not None):
-            raise ValueError('Error: select only one algorithm')
-
         self.hyper_params = hyper_params
-        self.sgd_params = sgd_params
-        self.adagrad_params = adagrad_params
+        self.optimize_params = optimize_params
         self.model_params = model_params
 
         self.rng = np.random.RandomState(hyper_params['rng_seed'])
@@ -213,7 +208,8 @@ class M1_VAE(object):
         # logpx, logpz, logqz = self.get_expr_lbound(X)
         # L = -T.sum(logpx + logpz + logqz)
         D_KL, recon_error, z = self.get_expr_lbound(X)
-        L = -(D_KL + recon_error)
+        # L = -(D_KL + recon_error)
+        L = D_KL + recon_error
 
 
         print 'start fitting'
@@ -221,13 +217,21 @@ class M1_VAE(object):
             cost=L,
             wrt=self.model_params_
         )
+        optimizer = {
+            'sgd': self.sgd,
+            'adagrad': self.adagrad,
+            'adadelta': self.adaDelta,
+            'rmsprop': self.rmsProp,
+            'adam': self.adam
+        }
 
-        updates = self.sgd(self.model_params_, gparams, self.adagrad_params)
+        updates = optimizer[self.hyper_params['optimizer']](
+            self.model_params_, gparams, self.optimize_params)
         # self.hist = self.early_stopping(
         self.hist = self.optimize(
             X,
             x_datas,
-            self.adagrad_params,
+            self.optimize_params,
             L,
             updates,
             self.rng,
@@ -237,7 +241,8 @@ class M1_VAE(object):
         )
 
     def sgd(self, params, gparams, hyper_params):
-        learning_rate = hyper_params['learning_rate']
+        # learning_rate = hyper_params['learning_rate']
+        learning_rate = 0.01
 
         updates = [(param, param - learning_rate * gparam)
                     for param, gparam in zip(params, gparams)]
@@ -250,12 +255,12 @@ class M1_VAE(object):
         hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
             for param in params]
 
-        updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
+        updates = [(param, param + learning_rate / (T.sqrt(h) + 1) * gparam)
                     for param, gparam, h in zip(params, gparams, hs)]
         updates += [(h, h + gparam ** 2) for gparam, h in zip(gparams, hs)]
         return updates
 
-    def RMSProp(self, params, gparams, hyper_params):
+    def rmsProp(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
 
         hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
@@ -268,7 +273,7 @@ class M1_VAE(object):
         updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
         return updates
 
-    def AdaDelta(self, params, gparams, hyper_params):
+    def adaDelta(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
 
         hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
@@ -358,11 +363,11 @@ class M1_VAE(object):
 
             if np.mod(i, n_mod_history) == 0:
                 num = n_samples / minibatch_size
-                print ('%d epoch train D_KL error: %.3f,\tReconstruction error: %.3f,\ttotal error: %.3f' %
+                print ('%d epoch train D_KL error: %.3f, Reconstruction error: %.3f, total error: %.3f' %
                       (i, total_dkl / num, total_recon_error / num, total_cost / num))
                 total_cost = 0
                 valid_error, valid_dkl, valid_recon_error = validate(valid_x)
-                print '\tvalid D_KL error: %.3f,\tReconstruction error: %.3f,\ttotal error: %.3f' % (valid_dkl, valid_recon_error, valid_error)
+                print '\tvalid D_KL error: %.3f, Reconstruction error: %.3f, total error: %.3f' % (valid_dkl, valid_recon_error, valid_error)
                 cost_history.append((i, valid_error))
         return cost_history
 
