@@ -23,12 +23,11 @@ def test_vae(
 
     datasets = load_data('../../20150717-/mnist.pkl.gz')
 
-    dataset_x, dataset_y = datasets
-    xs = dataset_x[:]
-    y_index = dataset_y[:]
-    ys = np.zeros((xs.shape[0], 10)).astype(theano.config.floatX)
-    for i in xrange(len(y_index)):
-        ys[i][y_index[i]] = 1.
+    train_set, validate_set = datasets
+    train_x, train_y = train_set
+    validate_x, validate_y = validate_set
+    xs = np.r_[train_x, validate_x]
+    print xs.shape
 
     adagrad_params = {
         'learning_rate' : learning_rate,

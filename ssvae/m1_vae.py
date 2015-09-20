@@ -309,6 +309,8 @@ class M1_VAE(object):
 
         train_x = x_datas[:50000]
         valid_x = x_datas[50000:]
+        print len(train_x)
+        print len(valid_x)
         train = theano.function(
             inputs=[X],
             outputs=cost,
