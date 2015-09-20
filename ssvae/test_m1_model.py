@@ -2,11 +2,8 @@
 # -*- coding: utf-8 -*-
 
 
-from itertools import cycle
-from matplotlib import cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
-import theano
 from scipy import misc
 
 from utils import load_data
