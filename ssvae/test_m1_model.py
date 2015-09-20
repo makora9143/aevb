@@ -23,9 +23,9 @@ def test_vae(
 
     datasets = load_data('../../20150717-/mnist.pkl.gz')
 
-    train_set_x, train_set_y = datasets
-    xs = train_set_x[:50000]
-    y_index = train_set_y[:50000]
+    dataset_x, dataset_y = datasets
+    xs = dataset_x[:]
+    y_index = dataset_y[:]
     ys = np.zeros((xs.shape[0], 10)).astype(theano.config.floatX)
     for i in xrange(len(y_index)):
         ys[i][y_index[i]] = 1.

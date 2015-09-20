@@ -66,7 +66,7 @@ class M2_VAE(object):
 
         # Recognize model
         self.recognize_layers = [
-            Layer(param_shape=(dim_x, n_hidden_recognize[0]), function=None),
+            Layer(param_shape=(dim_x, n_hidden_recognize[0]), function=None, nonbias=True),
             Layer(param_shape=(dim_y, n_hidden_recognize[0]), function=None),
         ]
         if len(n_hidden_recognize) > 1:
@@ -87,7 +87,7 @@ class M2_VAE(object):
 
         # Generate Model
         self.generate_layers = [
-            Layer((dim_z, n_hidden_generate[0]), function=None),
+            Layer((dim_z, n_hidden_generate[0]), function=None, nonbias=True),
             Layer((dim_y, n_hidden_generate[0]), function=None),
         ]
         if len(n_hidden) > 1:
@@ -320,6 +320,11 @@ class M2_VAE(object):
         n_mod_history = hyper_params['n_mod_history']
         calc_history = hyper_params['calc_history']
 
+        trainx = x_datas[:50000]
+        trainy = y_labels[:50000]
+        validx = x_datas[50000:]
+        validy = y_labels[50000:]
+
         train = theano.function(
             inputs=[X, Y],
             outputs=cost,
@@ -331,20 +336,20 @@ class M2_VAE(object):
             outputs=cost
         )
 
-        n_samples = x_datas.shape[0]
+        n_samples = trainx.shape[0]
         cost_history = []
 
         for i in xrange(n_iters):
-            ixs = rng.permutation(n_samples)[:minibatch_size]
-            minibatch_cost = train(x_datas[ixs], y_labels[ixs])
+            idxs = rng.permutation(n_samples)
+            for j in xrange(0, n_samples, minibatch_size):
+                idx = idxs[j:j+minibatch_size]
+                minibatch_cost = train(trainx[idx], trainy[idx])
             # print minibatch_cost
 
             if np.mod(i, n_mod_history) == 0:
-                print '%d epoch error: %f' % (i, minibatch_cost)
-                if calc_history == 'minibatch':
-                    cost_history.append((i, minibatch_cost))
-                else:
-                    cost_history.append((i, validate(x_datas[ixs], y_labels[ixs])))
+                validate_cost = validate(validx, validy)
+                print '%d epoch error: %f' % (i, validate_cost)
+                cost_history.append((i, validate_cost))
         return cost_history
 
     def early_stopping(self, X, x_datas, hyper_params, cost, updates, rng):

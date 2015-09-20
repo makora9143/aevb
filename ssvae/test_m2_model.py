@@ -14,8 +14,8 @@ from m2_vae import M2_VAE
 
 datasets = load_data('../../20150717-/mnist.pkl.gz')
 train_set_x, train_set_y = datasets
-xs = train_set_x[:50000]
-y_index = train_set_y[:50000]
+xs = train_set_x[:]
+y_index = train_set_y[:]
 ys = np.zeros((xs.shape[0], 10)).astype(theano.config.floatX)
 for i in xrange(len(y_index)):
     ys[i][y_index[i]] = 1.
@@ -79,19 +79,18 @@ if __name__ == '__main__':
     size = 28
     im_size = (28, 28)
     output_image = np.zeros((size * 10, size * 11))
-
     for i in range(10):
         idx = np.random.randint(50000)
-        testX = xs[idx]
-        testY = ys[idx]
+        testX = [xs[idx]]
+        output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*(j+1):im_size[1]*(j+2)] = np.array(testX).reshape(im_size)
+        testY = [ys[idx]]
         testZ = model.encode(testX, testY)
         for j in range(11):
             sampleY = np.zeros((1, 10)).astype(np.float32)
-            sampleY[j] = 1.
+            sampleY[0][j] = 1.
             im = model.decode(testZ, sampleY).reshape(im_size)
-            output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*j:im_size[1]*(j+1)] = im
+            output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*(j+1):im_size[1]*(j+2)] = im
     misc.imsave('sampleM2.jpg', output_image)
-
 
     plt.show()
 # End of Line.

@@ -307,6 +307,8 @@ class M1_VAE(object):
         n_mod_history = hyper_params['n_mod_history']
         calc_history = hyper_params['calc_history']
 
+        train_x = x_datas[:50000]
+        valid_x = x_datas[50000:]
         train = theano.function(
             inputs=[X],
             outputs=cost,
@@ -318,20 +320,18 @@ class M1_VAE(object):
             outputs=cost
         )
 
-        n_samples = x_datas.shape[0]
+        n_samples = train_x.shape[0]
         cost_history = []
 
         for i in xrange(n_iters):
-            ixs = rng.permutation(n_samples)[:minibatch_size]
-            minibatch_cost = train(x_datas[ixs])
-            # print minibatch_cost
+            ixs = rng.permutation(n_samples)
+            for j in xrange(0, n_samples, minibatch_size):
+                minibatch_cost = train(x_datas[j:j+minibatch_size])
 
             if np.mod(i, n_mod_history) == 0:
-                print '%d epoch error: %f' % (i, minibatch_cost)
-                if calc_history == 'minibatch':
-                    cost_history.append((i, minibatch_cost))
-                else:
-                    cost_history.append((i, validate(x_datas[ixs])))
+                valid_error = validate(valid_x)
+                print '%d epoch error: %f' % (i, valid_error)
+                cost_history.append((i, valid_error)
         return cost_history
 
     def early_stopping(self, X, x_datas, hyper_params, cost, updates, rng):
