@@ -355,7 +355,7 @@ class M1_VAE(object):
         for i in xrange(n_iters):
             ixs = rng.permutation(n_samples)
             for j in xrange(0, n_samples, minibatch_size):
-                cost, D_KL, recon_error = train(train_x[j:j+minibatch_size])
+                cost, D_KL, recon_error = train(train_x[ixs[j:j+minibatch_size]])
                 # print np.sum(hoge(train_x[:1])[0])
                 total_cost += cost
                 total_dkl += D_KL
