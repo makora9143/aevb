@@ -44,7 +44,7 @@ def test_vae(
             'nonlinear_q'       : 'relu',
             'nonlinear_p'       : 'relu',
             'type_px'           : 'bernoulli',
-            'optimizer'         : 'adagrad'
+            'optimizer'         : 'adam'
         }
     }
     all_params.update({'optimize_params': optimize_params})

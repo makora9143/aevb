@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 
+from collections import OrderedDict
+
 import numpy as np
 import theano
 import theano.tensor as T
@@ -10,7 +12,7 @@ from theano.tensor.shared_randomstreams import RandomStreams
 from mlp import Layer
 
 def shared32(x):
-    return theano.shared(x.astype(theano.config.floatX))
+    return theano.shared(np.asarray(x).astype(theano.config.floatX))
 
 class M1_VAE(object):
     def __init__(
@@ -188,14 +190,15 @@ class M1_VAE(object):
                 0.5 * (X - p_mean) ** 2 / (2 * T.exp(p_log_var))
             )
         elif self.type_px == 'bernoulli':
-            log_p_x_given_z = X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean)
+            # log_p_x_given_z = X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean)
+            log_p_x_given_z = T.nnet.binary_crossentropy(p_mean, X)
 
         logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var)
         logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
         # logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var, axis=1)
         # logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var), axis=1)
-        D_KL = (logpz - logqz) / n_samples
-        recon_error = T.sum(log_p_x_given_z) / n_samples
+        D_KL = (logpz - logqz)
+        recon_error = T.sum(log_p_x_given_z)
 
         return D_KL, recon_error, z_tilda
         # return log_p_x_given_z, logpz, logqz
@@ -241,84 +244,108 @@ class M1_VAE(object):
         )
 
     def sgd(self, params, gparams, hyper_params):
-        # learning_rate = hyper_params['learning_rate']
-        learning_rate = 0.01
+        learning_rate = hyper_params['learning_rate']
+        updates = OrderedDict()
 
-        updates = [(param, param - learning_rate * gparam)
-                    for param, gparam in zip(params, gparams)]
+        for param, gparam in zip(params, gparams):
+            updates[param] = param + learning_rate * gparam
 
         return updates
 
     def adagrad(self, params, gparams, hyper_params):
+        updates = OrderedDict()
         learning_rate = hyper_params['learning_rate']
 
-        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-            for param in params]
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
 
-        updates = [(param, param + learning_rate / (T.sqrt(h) + 1) * gparam)
-                    for param, gparam, h in zip(params, gparams, hs)]
-        updates += [(h, h + gparam ** 2) for gparam, h in zip(gparams, hs)]
+            r_new = r + T.sqr(gparam)
+
+            param_new = learning_rate / (T.sqrt(r_new) + 1) * gparam
+
+            updates[r] = r_new
+            updates[param] = param_new
+
         return updates
 
     def rmsProp(self, params, gparams, hyper_params):
+        updates = OrderedDict()
         learning_rate = hyper_params['learning_rate']
-
-        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-            for param in params]
-
         beta = 0.9
 
-        updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
-                    for param, gparam, h in zip(params, gparams, hs)]
-        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
+
+            r_new = beta * r + (1 - beta) * T.sqr(gparam)
+
+            param_new = param + learning_rate / (T.sqrt(r_new) + 1) * gparam
+
+            updates[param] = param_new
+            updates[r] = r_new
         return updates
 
     def adaDelta(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
-
-        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-              for param in params]
-
-        vs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-              for param in params]
-
-        ss = [shared32(np.zeros(param.get_value(borrow=True).shape))
-              for param in params]
-
         beta = 0.9
 
-        updates = [(param, param - v)
-                    for param, v in zip(params, vs)]
-        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
-        updates += [(v, (T.sqrt(s) + 1) / (T.sqrt(h) + 1) * gparam) for v, s, h, gparam in zip(vs, ss, hs, gparams)]
-        updates += [(s, beta * s + (1 - beta) * v ** 2) for s, v in zip(ss, vs)]
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
 
+            v = shared32(param.get_value() * 0.)
+
+            s = shared32(param.get_value() * 0.)
+
+            r_new = beta * r + (1 - beta) * T.sqr(gparam)
+
+            v_new = (T.sqrt(s_new) + 1) / (T.sqrt(v) + 1)
+
+            s_new = beta * s + (1 - beta) * T.sqr(v_new)
+
+            param_new = param + v_new
+
+            updates[s] = s_new
+            updates[v] = v_new
+            updates[r] = r_new
+            updates[param] = param_new
         return updates
 
     def adam(self, params, gparams, hyper_params):
+        updates = OrderedDict()
+        decay1 = 0.1
+        decay2 = 0.001
+        weight_decay = 1000 / 50000.
         learning_rate = hyper_params['learning_rate']
 
-        rs = [shared32(np.ones(param.get_value(borrow=True).shape))
-              for param in params]
-        vs = [shared32(np.ones(param.get_value(borrow=True).shape))
-              for param in params]
-        ts = [shared32(np.ones(param.get_value(borrow=True).shape))
-              for param in params]
+        it = shared32(0.)
+        updates[it] = it + 1.
 
-        gnma = 0.999
-        beta = 0.9
-        # weight_decay = 1000 / 50000.
+        fix1 = 1. - (1. - decay1) ** (it + 1.)
+        fix2 = 1. - (1. - decay2) ** (it + 1.)
 
-        updates = [
-            (param,
-             param - learning_rate / (T.sqrt(r / (1 - gnma ** t))) * v / (1 - beta ** t))
-             for param, r, v, t  in zip(params, rs, vs, ts)]
-        # updates += [(r, gnma * r + (1- gnma) * (gparam - weight_decay * param) ** 2) for param, gparam, r in zip(params, gparams, rs)]
-        # updates += [(v, beta * v + (1- beta) * (gparam - weight_decay * param)) for param, gparam, v in zip(params, gparams, vs)]
-        updates += [(r, gnma * r + (1- gnma) * gparam ** 2) for param, gparam, r in zip(params, gparams, rs)]
-        updates += [(v, beta * v + (1- beta) * gparam) for param, gparam, v in zip(params, gparams, vs)]
-        updates += [(t, t + 1) for t in ts]
+        lr_t = learning_rate * T.sqrt(fix2) / fix1
+
+        for param, gparam in zip(params, gparams):
+            if weight_decay > 0:
+                gparam -= weight_decay * param
+
+            mom1 = shared32(param.get_value(borrow=True) * 0.)
+            mom2 = shared32(param.get_value(borrow=True) * 0.)
+
+            mom1_new = mom1 + decay1 * (gparam - mom1)
+            mom2_new = mom2 + decay2 * (T.sqr(gparam) - mom2)
+
+            effgrad = mom1_new / (T.sqrt(mom2_new) + 1e-10)
+
+            effstep_new = lr_t * effgrad
+
+            param_new = param + effstep_new
+
+            updates[param] = param_new
+            updates[mom1] = mom1_new
+            updates[mom2] = mom2_new
+
         return updates
+
 
 
 
