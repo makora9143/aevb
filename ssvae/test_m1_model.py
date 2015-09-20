@@ -41,9 +41,9 @@ def test_vae(
             'n_hidden'          : [500, 500],
             'n_mc_sampling'     : n_mc_samples,
             'scale_init'        : scale_init,
-            'nonlinear_q'       : 'tanh',
-            'nonlinear_p'       : 'tanh',
-            'type_px'           : 'gaussian',
+            'nonlinear_q'       : 'relu',
+            'nonlinear_p'       : 'relu',
+            'type_px'           : 'bernoulli',
             'optimizer'         : 'adagrad'
         }
     }

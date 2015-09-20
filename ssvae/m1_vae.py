@@ -366,6 +366,8 @@ class M1_VAE(object):
                 print ('%d epoch train D_KL error: %.3f, Reconstruction error: %.3f, total error: %.3f' %
                       (i, total_dkl / num, total_recon_error / num, total_cost / num))
                 total_cost = 0
+                total_dkl = 0
+                total_recon_error = 0
                 valid_error, valid_dkl, valid_recon_error = validate(valid_x)
                 print '\tvalid D_KL error: %.3f, Reconstruction error: %.3f, total error: %.3f' % (valid_dkl, valid_recon_error, valid_error)
                 cost_history.append((i, valid_error))
