@@ -191,16 +191,16 @@ class M1_VAE(object):
             )
         elif self.type_px == 'bernoulli':
             # log_p_x_given_z = X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean)
-            log_p_x_given_z = T.nnet.binary_crossentropy(p_mean, X)
+            log_p_x_given_z = - T.nnet.binary_crossentropy(p_mean, X)
 
-        logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var)
-        logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
+        logqz = - 0.5 * (np.log(2 * np.pi) + 1 + q_log_var)
+        logpz = - 0.5 * (np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
         # logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var, axis=1)
         # logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var), axis=1)
-        D_KL = (logpz - logqz)
+        D_KL = T.sum(logpz - logqz)
         recon_error = T.sum(log_p_x_given_z)
 
-        return D_KL, recon_error, z_tilda
+        return D_KL, recon_error, log_p_x_given_z.shape
         # return log_p_x_given_z, logpz, logqz
 
     def fit(self, x_datas):
@@ -220,6 +220,11 @@ class M1_VAE(object):
             cost=L,
             wrt=self.model_params_
         )
+        hoge = theano.function(
+            inputs=[X],
+            outputs=[z]
+        )
+        print hoge(x_datas)
         optimizer = {
             'sgd': self.sgd,
             'adagrad': self.adagrad,
@@ -367,10 +372,6 @@ class M1_VAE(object):
         validate = theano.function(
             inputs=[X],
             outputs=[cost, D_KL, recon_error]
-        )
-        hoge = theano.function(
-            inputs=[X],
-            outputs=[z]
         )
 
         n_samples = train_x.shape[0]
