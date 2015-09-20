@@ -13,9 +13,11 @@ from utils import load_data
 from m2_vae import M2_VAE
 
 datasets = load_data('../../20150717-/mnist.pkl.gz')
-train_set_x, train_set_y = datasets
-xs = train_set_x[:]
-y_index = train_set_y[:]
+train_set, validate_set = datasets
+train_x, train_y = train_set
+validate_x, validate_y = validate_set
+xs = np.r_[train_x, validate_x]
+y_index = np.r_[train_y, validate_y]
 ys = np.zeros((xs.shape[0], 10)).astype(theano.config.floatX)
 for i in xrange(len(y_index)):
     ys[i][y_index[i]] = 1.
@@ -28,9 +30,7 @@ def test_vae(
         dim_z=2,
     ):
 
-
-
-    adagrad_params = {
+    optimize_params = {
         'learning_rate' : learning_rate,
         'n_iters'       : n_iters,
         'minibatch_size': 1000,
@@ -47,12 +47,13 @@ def test_vae(
             'n_hidden'          : [500, 500],
             'n_mc_sampling'     : n_mc_samples,
             'scale_init'        : scale_init,
-            'nonlinear_q'       : 'tanh',
-            'nonlinear_p'       : 'tanh',
-            'type_px'           : 'gaussian',
+            'nonlinear_q'       : 'softplus',
+            'nonlinear_p'       : 'softplus',
+            'type_px'           : 'bernoulli',
+            'optimizer'         : 'adam'
         }
     }
-    all_params.update({'adagrad_params': adagrad_params})
+    all_params.update({'optimize_params': optimize_params})
 
     model = M2_VAE(**all_params)
     model.fit(xs, ys)

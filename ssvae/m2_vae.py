@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 
+from collections import OrderedDict
+
 import numpy as np
 import theano
 import theano.tensor as T
@@ -10,23 +12,18 @@ from theano.tensor.shared_randomstreams import RandomStreams
 from mlp import Layer
 
 def shared32(x):
-    return theano.shared(x.astype(theano.config.floatX))
+    return theano.shared(np.asarray(x).astype(theano.config.floatX))
 
 class M2_VAE(object):
     def __init__(
         self,
         hyper_params=None,
-        sgd_params=None,
-        adagrad_params=None,
+        optimize_params=None,
         model_params=None
     ):
 
-        if (sgd_params is not None) and (adagrad_params is not None):
-            raise ValueError('Error: select only one algorithm')
-
         self.hyper_params = hyper_params
-        self.sgd_params = sgd_params
-        self.adagrad_params = adagrad_params
+        self.optimize_params = optimize_params
         self.model_params = model_params
 
         self.rng = np.random.RandomState(hyper_params['rng_seed'])
@@ -38,6 +35,7 @@ class M2_VAE(object):
 
     def relu(self, x): return x*(x>0) + 0.01 * x
     def softplus(self, x): return T.log(T.exp(x) + 1)
+    def identify(self, x): return x
 
     def init_model_params(self, dim_x, dim_y):
         print 'M2 model params initialize'
@@ -54,7 +52,7 @@ class M2_VAE(object):
             'relu': self.relu,
             'softplus': self.softplus,
             'sigmoid': T.nnet.sigmoid,
-            'none': None,
+            'none': self.identify,
         }
 
         self.nonlinear_q = activation[self.hyper_params['nonlinear_q']]
@@ -66,8 +64,8 @@ class M2_VAE(object):
 
         # Recognize model
         self.recognize_layers = [
-            Layer(param_shape=(dim_x, n_hidden_recognize[0]), function=None, nonbias=True),
-            Layer(param_shape=(dim_y, n_hidden_recognize[0]), function=None),
+            Layer(param_shape=(dim_x, n_hidden_recognize[0]), function=self.identify, nonbias=True),
+            Layer(param_shape=(dim_y, n_hidden_recognize[0]), function=self.identify)
         ]
         if len(n_hidden_recognize) > 1:
             self.recognize_layers += [
@@ -76,19 +74,19 @@ class M2_VAE(object):
             ]
         self.recognize_mean_layer = Layer(
             param_shape=(n_hidden_recognize[-1], dim_z),
-            function=None
+            function=self.identify
         )
-        self.recognize_log_sigma_layer = Layer(
+        self.recognize_log_var_layer = Layer(
             param_shape=(n_hidden_recognize[-1], dim_z),
-            function=None,
+            function=self.identify,
             w_zero=True, b_zero=True
         )
 
 
         # Generate Model
         self.generate_layers = [
-            Layer((dim_z, n_hidden_generate[0]), function=None, nonbias=True),
-            Layer((dim_y, n_hidden_generate[0]), function=None),
+            Layer((dim_z, n_hidden_generate[0]), function=self.identify, nonbias=True),
+            Layer((dim_y, n_hidden_generate[0]), function=self.identify),
         ]
         if len(n_hidden) > 1:
             self.generate_layers += [
@@ -99,9 +97,9 @@ class M2_VAE(object):
             param_shape=(n_hidden_generate[-1], dim_x),
             function=output_f
         )
-        self.generate_log_sigma_layer = Layer(
+        self.generate_log_var_layer = Layer(
             param_shape=(n_hidden_generate[-1], dim_x),
-            function=None,
+            function=self.identify,
             b_zero=True
         )
 
@@ -109,13 +107,13 @@ class M2_VAE(object):
         self.model_params_ = (
             [param for layer in self.recognize_layers for param in layer.params] +
             self.recognize_mean_layer.params +
-            self.recognize_log_sigma_layer.params +
+            self.recognize_log_var_layer.params +
             [param for layer in self.generate_layers for param in layer.params] +
             self.generate_mean_layer.params
         )
 
         if self.type_px == 'gaussian':
-            self.model_params_ += self.generate_log_sigma_layer.params
+            self.model_params_ += self.generate_log_var_layer.params
 
     def recognize_model(self, X, Y):
         for i, layer in enumerate(self.recognize_layers):
@@ -128,13 +126,11 @@ class M2_VAE(object):
                 layer_out = layer.fprop(layer_out)
 
         q_mean = self.recognize_mean_layer.fprop(layer_out)
-        q_log_var = self.recognize_log_sigma_layer.fprop(layer_out)
+        q_log_var = self.recognize_log_var_layer.fprop(layer_out)
 
         return {
             'q_mean': q_mean,
             'q_log_var': q_log_var,
-            # 'q_log_var': 3 * T.tanh(q_log_var) - 1,
-            # 'q_log_var': T.clip(q_log_var, -4., 2.),
         }
 
     def generate_model(self, Z, Y):
@@ -148,13 +144,9 @@ class M2_VAE(object):
                 layer_out = layer.fprop(layer_out)
 
         p_mean = self.generate_mean_layer.fprop(layer_out)
-        p_log_var = self.generate_log_sigma_layer.fprop(layer_out)
+        p_log_var = self.generate_log_var_layer.fprop(layer_out)
 
         return {
-            # 'p_mean': 0.5 * (T.tanh(p_mean) + 1), # 0 <= mu <= 1
-            # 'p_log_var': 3 * T.tanh(p_log_var) - 1, # -4 <= log sigma **2 <= 2
-            # 'p_mean': T.clip(p_mean, 0., 1.),
-            # 'p_log_var': T.clip(p_log_var, -4., 2.)
             'p_mean': p_mean,
             'p_log_var': p_log_var
         }
@@ -186,7 +178,7 @@ class M2_VAE(object):
         q_mean = recognized_zs['q_mean']
         q_log_var = recognized_zs['q_log_var']
 
-        eps = self.rng_noise.normal(size=q_mean.shape).astype(theano.config.floatX)
+        eps = self.rng_noise.normal(avg=0., std=1., size=q_mean.shape).astype(theano.config.floatX)
         # T.exp(0.5 * q_log_var) = std
         # z = mean_z + std * epsilon
         z_tilda = q_mean + T.exp(0.5 * q_log_var) * eps
@@ -202,14 +194,17 @@ class M2_VAE(object):
                 0.5 * (X - p_mean) ** 2 / (2 * T.exp(p_log_var))
             )
         elif self.type_px == 'bernoulli':
-            log_p_x_given_z = X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean)
+            # log_p_x_given_z = X * T.log(p_mean) + (1 - X) * T.log(1 - p_mean)
+            log_p_x_given_z = - T.nnet.binary_crossentropy(p_mean, X)
 
-        logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var)
-        logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
+        logqz = - 0.5 * (np.log(2 * np.pi) + 1 + q_log_var)
+        logpz = - 0.5 * (np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var))
         # logqz = - 0.5 * T.sum(np.log(2 * np.pi) + 1 + q_log_var, axis=1)
         # logpz = - 0.5 * T.sum(np.log(2 * np.pi) + q_mean ** 2 + T.exp(q_log_var), axis=1)
+        D_KL = T.sum(logpz - logqz)
+        recon_error = T.sum(log_p_x_given_z)
 
-        return (T.sum(log_p_x_given_z) + logpz - logqz) / n_samples
+        return D_KL, recon_error, log_p_x_given_z.shape
         # return log_p_x_given_z, logpz, logqz
 
     def fit(self, x_datas, y_labels):
@@ -220,136 +215,194 @@ class M2_VAE(object):
 
         # logpx, logpz, logqz = self.get_expr_lbound(X)
         # L = -T.sum(logpx + logpz + logqz)
-        bound = self.get_expr_lbound(X, Y)
-        L = -bound
+        D_KL, recon_error, z = self.get_expr_lbound(X, Y)
+        L = D_KL + recon_error
+
 
         print 'start fitting'
         gparams = T.grad(
             cost=L,
             wrt=self.model_params_
         )
-        updates = self.adagrad(self.model_params_, gparams, self.adagrad_params)
+        optimizer = {
+            'sgd': self.sgd,
+            'adagrad': self.adagrad,
+            'adadelta': self.adaDelta,
+            'rmsprop': self.rmsProp,
+            'adam': self.adam
+        }
+
+        updates = optimizer[self.hyper_params['optimizer']](
+            self.model_params_, gparams, self.optimize_params)
         # self.hist = self.early_stopping(
         self.hist = self.optimize(
             X,
             Y,
             x_datas,
             y_labels,
-            self.adagrad_params,
+            self.optimize_params,
             L,
             updates,
             self.rng,
+            D_KL,
+            recon_error,
+            z
         )
 
+    def sgd(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+        updates = OrderedDict()
+
+        for param, gparam in zip(params, gparams):
+            updates[param] = param + learning_rate * gparam
+
+        return updates
+
     def adagrad(self, params, gparams, hyper_params):
+        updates = OrderedDict()
         learning_rate = hyper_params['learning_rate']
 
-        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-            for param in params]
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
 
-        updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
-                    for param, gparam, h in zip(params, gparams, hs)]
-        updates += [(h, h + gparam ** 2) for gparam, h in zip(gparams, hs)]
+            r_new = r + T.sqr(gparam)
+
+            param_new = learning_rate / (T.sqrt(r_new) + 1) * gparam
+
+            updates[r] = r_new
+            updates[param] = param_new
+
         return updates
 
-    def RMSProp(self, params, gparams, hyper_params):
+    def rmsProp(self, params, gparams, hyper_params):
+        updates = OrderedDict()
         learning_rate = hyper_params['learning_rate']
-
-        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-            for param in params]
-
         beta = 0.9
 
-        updates = [(param, param - learning_rate / (T.sqrt(h) + 1) * gparam)
-                    for param, gparam, h in zip(params, gparams, hs)]
-        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
+
+            r_new = beta * r + (1 - beta) * T.sqr(gparam)
+
+            param_new = param + learning_rate / (T.sqrt(r_new) + 1) * gparam
+
+            updates[param] = param_new
+            updates[r] = r_new
         return updates
 
-    def AdaDelta(self, params, gparams, hyper_params):
+    def adaDelta(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
-
-        hs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-              for param in params]
-
-        vs = [shared32(np.zeros(param.get_value(borrow=True).shape))
-              for param in params]
-
-        ss = [shared32(np.zeros(param.get_value(borrow=True).shape))
-              for param in params]
-
         beta = 0.9
 
-        updates = [(param, param - v)
-                    for param, v in zip(params, vs)]
-        updates += [(h, beta * h + (1 - beta) * gparam ** 2) for gparam, h in zip(gparams, hs)]
-        updates += [(v, (T.sqrt(s) + 1) / (T.sqrt(h) + 1) * gparam) for v, s, h, gparam in zip(vs, ss, hs, gparams)]
-        updates += [(s, beta * s + (1 - beta) * v ** 2) for s, v in zip(ss, vs)]
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
 
+            v = shared32(param.get_value() * 0.)
+
+            s = shared32(param.get_value() * 0.)
+
+            r_new = beta * r + (1 - beta) * T.sqr(gparam)
+
+            v_new = (T.sqrt(s_new) + 1) / (T.sqrt(v) + 1)
+
+            s_new = beta * s + (1 - beta) * T.sqr(v_new)
+
+            param_new = param + v_new
+
+            updates[s] = s_new
+            updates[v] = v_new
+            updates[r] = r_new
+            updates[param] = param_new
         return updates
 
     def adam(self, params, gparams, hyper_params):
+        updates = OrderedDict()
+        decay1 = 0.1
+        decay2 = 0.001
+        weight_decay = 1000 / 50000.
         learning_rate = hyper_params['learning_rate']
 
-        rs = [shared32(np.ones(param.get_value(borrow=True).shape))
-              for param in params]
-        vs = [shared32(np.ones(param.get_value(borrow=True).shape))
-              for param in params]
-        ts = [shared32(np.ones(param.get_value(borrow=True).shape))
-              for param in params]
+        it = shared32(0.)
+        updates[it] = it + 1.
 
-        gnma = 0.999
-        beta = 0.9
-        # weight_decay = 1000 / 50000.
+        fix1 = 1. - (1. - decay1) ** (it + 1.)
+        fix2 = 1. - (1. - decay2) ** (it + 1.)
 
-        updates = [
-            (param,
-             param - learning_rate / (T.sqrt(r / (1 - gnma ** t))) * v / (1 - beta ** t))
-             for param, r, v, t  in zip(params, rs, vs, ts)]
-        # updates += [(r, gnma * r + (1- gnma) * (gparam - weight_decay * param) ** 2) for param, gparam, r in zip(params, gparams, rs)]
-        # updates += [(v, beta * v + (1- beta) * (gparam - weight_decay * param)) for param, gparam, v in zip(params, gparams, vs)]
-        updates += [(r, gnma * r + (1- gnma) * gparam ** 2) for param, gparam, r in zip(params, gparams, rs)]
-        updates += [(v, beta * v + (1- beta) * gparam) for param, gparam, v in zip(params, gparams, vs)]
-        updates += [(t, t + 1) for t in ts]
+        lr_t = learning_rate * T.sqrt(fix2) / fix1
+
+        for param, gparam in zip(params, gparams):
+            if weight_decay > 0:
+                gparam -= weight_decay * param
+
+            mom1 = shared32(param.get_value(borrow=True) * 0.)
+            mom2 = shared32(param.get_value(borrow=True) * 0.)
+
+            mom1_new = mom1 + decay1 * (gparam - mom1)
+            mom2_new = mom2 + decay2 * (T.sqr(gparam) - mom2)
+
+            effgrad = mom1_new / (T.sqrt(mom2_new) + 1e-10)
+
+            effstep_new = lr_t * effgrad
+
+            param_new = param + effstep_new
+
+            updates[param] = param_new
+            updates[mom1] = mom1_new
+            updates[mom2] = mom2_new
+
         return updates
 
 
 
-    def optimize(self, X, Y, x_datas, y_labels,hyper_params, cost, updates, rng):
+
+    def optimize(self, X, Y, x_datas, y_labels, hyper_params, cost, updates, rng, D_KL, recon_error,z):
         n_iters = hyper_params['n_iters']
         minibatch_size = hyper_params['minibatch_size']
         n_mod_history = hyper_params['n_mod_history']
         calc_history = hyper_params['calc_history']
 
-        trainx = x_datas[:50000]
-        trainy = y_labels[:50000]
-        validx = x_datas[50000:]
-        validy = y_labels[50000:]
+        train_x = x_datas[:50000]
+        valid_x = x_datas[50000:]
+
+        train_y = y_labels[:50000]
+        valid_y = y_labels[50000:]
 
         train = theano.function(
             inputs=[X, Y],
-            outputs=cost,
+            outputs=[cost, D_KL, recon_error],
             updates=updates
         )
 
         validate = theano.function(
             inputs=[X, Y],
-            outputs=cost
+            outputs=[cost, D_KL, recon_error]
         )
 
-        n_samples = trainx.shape[0]
+        n_samples = train_x.shape[0]
         cost_history = []
 
+        total_cost = 0
+        total_dkl = 0
+        total_recon_error = 0
         for i in xrange(n_iters):
-            idxs = rng.permutation(n_samples)
+            ixs = rng.permutation(n_samples)
             for j in xrange(0, n_samples, minibatch_size):
-                idx = idxs[j:j+minibatch_size]
-                minibatch_cost = train(trainx[idx], trainy[idx])
-            # print minibatch_cost
+                cost, D_KL, recon_error = train(train_x[ixs[j:j+minibatch_size]], train_y[ixs[j:j+minibatch_size]])
+                # print np.sum(hoge(train_x[:1])[0])
+                total_cost += cost
+                total_dkl += D_KL
+                total_recon_error += recon_error
 
             if np.mod(i, n_mod_history) == 0:
-                validate_cost = validate(validx, validy)
-                print '%d epoch error: %f' % (i, validate_cost)
-                cost_history.append((i, validate_cost))
+                num = n_samples / minibatch_size
+                print ('%d epoch train D_KL error: %.3f, Reconstruction error: %.3f, total error: %.3f' %
+                      (i, total_dkl / num, total_recon_error / num, total_cost / num))
+                total_cost = 0
+                total_dkl = 0
+                total_recon_error = 0
+                valid_error, valid_dkl, valid_recon_error = validate(valid_x, valid_y)
+                print '\tvalid D_KL error: %.3f, Reconstruction error: %.3f, total error: %.3f' % (valid_dkl, valid_recon_error, valid_error)
+                cost_history.append((i, valid_error))
         return cost_history
 
     def early_stopping(self, X, x_datas, hyper_params, cost, updates, rng):

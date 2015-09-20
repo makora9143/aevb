@@ -211,7 +211,6 @@ class M1_VAE(object):
         # logpx, logpz, logqz = self.get_expr_lbound(X)
         # L = -T.sum(logpx + logpz + logqz)
         D_KL, recon_error, z = self.get_expr_lbound(X)
-        # L = -(D_KL + recon_error)
         L = D_KL + recon_error
 
 
@@ -220,11 +219,6 @@ class M1_VAE(object):
             cost=L,
             wrt=self.model_params_
         )
-        hoge = theano.function(
-            inputs=[X],
-            outputs=[z]
-        )
-        print hoge(x_datas)
         optimizer = {
             'sgd': self.sgd,
             'adagrad': self.adagrad,
