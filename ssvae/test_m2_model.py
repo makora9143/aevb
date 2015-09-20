@@ -67,7 +67,7 @@ def test_vae(
 
 if __name__ == '__main__':
     data, model = test_vae(
-        n_iters=10000,
+        n_iters=1000,
         learning_rate=0.001,
         n_mc_samples=1,
         scale_init=1.,
