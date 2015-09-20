@@ -83,7 +83,7 @@ if __name__ == '__main__':
     for i in range(10):
         idx = np.random.randint(50000)
         testX = [xs[idx]]
-        output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*(j+1):im_size[1]*(j+2)] = np.array(testX).reshape(im_size)
+        output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*(0):im_size[1]*(1)] = np.array(testX).reshape(im_size)
         testY = [ys[idx]]
         testZ = model.encode(testX, testY)
         for j in range(11):
