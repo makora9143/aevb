@@ -309,15 +309,15 @@ class M2_VAE(Base_VAE):
             for j in xrange(0, n_samples, minibatch_size):
                 cost, D_KL, recon_error = train(train_x[ixs[j:j+minibatch_size]], train_y[ixs[j:j+minibatch_size]])
 
-                iter = i * (n_samples / minibatch_size) + minibatch_size
+                iter = i * (n_samples / minibatch_size) + j / minibatch_size
 
-                if (iter + 1) % 50 == 0:
+                if (iter) % 50 == 0:
                     valid_error = 0.
                     for _ in xrange(3):
                         valid_error += validate(valid_x, valid_y)
                     valid_error /= 3
                     print 'epoch %d, minibatch %d/%d, valid total error: %.3f' % (i, j / minibatch_size + 1, n_samples / minibatch_size, valid_error)
-                    cost_history.append((i, valid_error))
+                    cost_history.append((i*j, valid_error))
                     if valid_error > valid_best_error:
                         if valid_error > valid_best_error * improvement_threshold:
                             patience = max(patience, iter * patience_increase)
