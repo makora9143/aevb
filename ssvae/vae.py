@@ -2,26 +2,29 @@
 # -*- coding: utf-8 -*-
 
 
+from collections import OrderedDict
+
 import numpy as np
 import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
 
-class VAE(object):
+
+def shared32(x):
+    return theano.shared(np.asarray(x).astype(theano.config.floatX))
+
+
+class Base_VAE(object):
+
     def __init__(
         self,
         hyper_params=None,
-        sgd_params=None,
-        adagrad_params=None,
+        optimize_params=None,
         model_params=None
     ):
 
-        if (sgd_params is not None) and (adagrad_params is not None):
-            raise ValueError('Error: select only one algorithm')
-
         self.hyper_params = hyper_params
-        self.sgd_params = sgd_params
-        self.adagrad_params = adagrad_params
+        self.optimize_params = optimize_params
         self.model_params = model_params
 
         self.rng = np.random.RandomState(hyper_params['rng_seed'])
@@ -30,125 +33,111 @@ class VAE(object):
         self.decode_main = None
         self.encode_main = None
 
-    def fit(self, x_datas):
-        X = T.matrix()
-        self.rng_noise = RandomStreams(self.hyper_params['rng_seed'])
-        self.init_model_params(dim_x=x_datas.shape[1])
+    def relu(self, x): return x*(x>0) + 0.01 * x
+    def softplus(self, x): return T.log(T.exp(x) + 1)
+    def identify(self, x): return x
 
-        lbound, consts = self.get_expr_lbound(X)
-        cost = -lbound
-
-        model_params_list = [param for param in self.model_params_.values()]
-
-        if self.sgd_params is not None:
-            self.hist = self.sgd_calc(
-                x_datas,
-                cost,
-                consts,
-                X,
-                model_params_list,
-                self.sgd_params,
-                self.rng
-            )
-        else:
-            self.hist = self.adagrad_calc(
-                x_datas,
-                cost,
-                consts,
-                X,
-                model_params_list,
-                self.adagrad_params,
-                self.rng
-            )
-
-    def sgd_calc(self, x_datas, cost, consts, X, model_params, hyper_params, rng):
-        n_iters = hyper_params['n_iters']
+    def sgd(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']
-        minibatch_size = hyper_params['minibatch_size']
-        n_mod_history = hyper_params['n_mod_history']
-        calc_history = hyper_params['calc_history']
+        updates = OrderedDict()
 
-        gparams = T.grad(
-            cost=cost,
-            wrt=model_params_list,
-            consider_constant=consts
-        )
-        updates = [(param, param - learning_rate * gparam)
-                    for param, gparam in zip(model_params, gparams)]
+        for param, gparam in zip(params, gparams):
+            updates[param] = param + learning_rate * gparam
 
-        train = theano.function(
-            inputs=[X],
-            outputs=cost,
-            updates=updates
-        )
+        return updates
 
-        validate = theano.function(
-            inputs=[X],
-            outputs=cost
-        )
-
-        n_samples = x_datas.shape[0]
-        cost_history = []
-
-        for i in xrange(n_iters):
-            ixs = rng.permutation(n_samples)[:minibatch_size]
-            minibatch_cost = train(x_datas[ixs])
-
-            if np.mode(i, n_mod_history) == 0:
-                print '%d epoch error: %f' % (i, minibatch_cost)
-                if calc_history == 'minibatch':
-                    cost_history.append((i, minibatch_cost))
-                else:
-                    cost_history.append((i, validate(x_datas[ixs])))
-        return cost_history
-
-
-    def adagrad_calc(self, x_datas, cost, consts, X, model_params, hyper_params, rng):
-        n_iters = hyper_params['n_iters']
+    def adagrad(self, params, gparams, hyper_params):
+        updates = OrderedDict()
         learning_rate = hyper_params['learning_rate']
-        minibatch_size = hyper_params['minibatch_size']
-        n_mod_history = hyper_params['n_mod_history']
-        calc_history = hyper_params['calc_history']
 
-        hs = [theano.shared(np.ones(
-                    param.get_value(borrow=True).shape
-                ).astype(theano.config.floatX))
-            for param in model_params]
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
 
-        gparams = T.grad(
-            cost=cost,
-            wrt=model_params,
-            consider_constant=consts
-        )
-        updates = [(param, param - learning_rate / T.sqrt(h) * gparam)
-                    for param, gparam, h in zip(model_params, gparams, hs)]
-        updates += [(h, h + gparam ** 2) for gparam, h in zip(gparams, hs)]
+            r_new = r + T.sqr(gparam)
 
-        train = theano.function(
-            inputs=[X],
-            outputs=cost,
-            updates=updates
-        )
+            param_new = learning_rate / (T.sqrt(r_new) + 1) * gparam
 
-        validate = theano.function(
-            inputs=[X],
-            outputs=cost
-        )
+            updates[r] = r_new
+            updates[param] = param_new
 
-        n_samples = x_datas.shape[0]
-        cost_history = []
+        return updates
 
-        for i in xrange(n_iters):
-            ixs = rng.permutation(n_samples)[:minibatch_size]
-            minibatch_cost = train(x_datas[ixs])
+    def rmsProp(self, params, gparams, hyper_params):
+        updates = OrderedDict()
+        learning_rate = hyper_params['learning_rate']
+        beta = 0.9
 
-            if np.mod(i, n_mod_history) == 0:
-                print '%d epoch error: %f' % (i, minibatch_cost)
-                if calc_history == 'minibatch':
-                    cost_history.append((i, minibatch_cost))
-                else:
-                    cost_history.append((i, validate(x_datas[ixs])))
-        return cost_history
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
 
+            r_new = beta * r + (1 - beta) * T.sqr(gparam)
+
+            param_new = param + learning_rate / (T.sqrt(r_new) + 1) * gparam
+
+            updates[param] = param_new
+            updates[r] = r_new
+        return updates
+
+    def adaDelta(self, params, gparams, hyper_params):
+        learning_rate = hyper_params['learning_rate']
+        beta = 0.9
+
+        for param, gparam in zip(params, gparams):
+            r = shared32(param.get_value() * 0.)
+
+            v = shared32(param.get_value() * 0.)
+
+            s = shared32(param.get_value() * 0.)
+
+            r_new = beta * r + (1 - beta) * T.sqr(gparam)
+
+            v_new = (T.sqrt(s_new) + 1) / (T.sqrt(v) + 1)
+
+            s_new = beta * s + (1 - beta) * T.sqr(v_new)
+
+            param_new = param + v_new
+
+            updates[s] = s_new
+            updates[v] = v_new
+            updates[r] = r_new
+            updates[param] = param_new
+        return updates
+
+    def adam(self, params, gparams, hyper_params):
+        updates = OrderedDict()
+        decay1 = 0.1
+        decay2 = 0.001
+        weight_decay = 1000 / 50000.
+        learning_rate = hyper_params['learning_rate']
+
+        it = shared32(0.)
+        updates[it] = it + 1.
+
+        fix1 = 1. - (1. - decay1) ** (it + 1.)
+        fix2 = 1. - (1. - decay2) ** (it + 1.)
+
+        lr_t = learning_rate * T.sqrt(fix2) / fix1
+
+        for param, gparam in zip(params, gparams):
+            if weight_decay > 0:
+                gparam -= weight_decay * param
+
+            mom1 = shared32(param.get_value(borrow=True) * 0.)
+            mom2 = shared32(param.get_value(borrow=True) * 0.)
+
+            mom1_new = mom1 + decay1 * (gparam - mom1)
+            mom2_new = mom2 + decay2 * (T.sqr(gparam) - mom2)
+
+            effgrad = mom1_new / (T.sqrt(mom2_new) + 1e-10)
+
+            effstep_new = lr_t * effgrad
+
+            param_new = param + effstep_new
+
+            updates[param] = param_new
+            updates[mom1] = mom1_new
+            updates[mom2] = mom2_new
+
+        return updates
 
 # End of Line.

@@ -2,19 +2,16 @@
 # -*- coding: utf-8 -*-
 
 
-from collections import OrderedDict
-
 import numpy as np
 import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
 
 from mlp import Layer
+from vae import Base_VAE
 
-def shared32(x):
-    return theano.shared(np.asarray(x).astype(theano.config.floatX))
 
-class M1_VAE(object):
+class M1_VAE(Base_VAE):
     def __init__(
         self,
         hyper_params=None,
@@ -126,8 +123,6 @@ class M1_VAE(object):
         return {
             'q_mean': q_mean,
             'q_log_var': q_log_var,
-            # 'q_log_var': 3 * T.tanh(q_log_var) - 1,
-            # 'q_log_var': T.clip(q_log_var, -4., 2.),
         }
 
     def generate_model(self, Z):
@@ -141,10 +136,6 @@ class M1_VAE(object):
         p_log_var = self.generate_log_var_layer.fprop(layer_out)
 
         return {
-            # 'p_mean': 0.5 * (T.tanh(p_mean) + 1), # 0 <= mu <= 1
-            # 'p_log_var': 3 * T.tanh(p_log_var) - 1, # -4 <= log sigma **2 <= 2
-            # 'p_mean': T.clip(p_mean, 0., 1.),
-            # 'p_log_var': T.clip(p_log_var, -4., 2.)
             'p_mean': p_mean,
             'p_log_var': p_log_var
         }
@@ -242,117 +233,10 @@ class M1_VAE(object):
             z
         )
 
-    def sgd(self, params, gparams, hyper_params):
-        learning_rate = hyper_params['learning_rate']
-        updates = OrderedDict()
-
-        for param, gparam in zip(params, gparams):
-            updates[param] = param + learning_rate * gparam
-
-        return updates
-
-    def adagrad(self, params, gparams, hyper_params):
-        updates = OrderedDict()
-        learning_rate = hyper_params['learning_rate']
-
-        for param, gparam in zip(params, gparams):
-            r = shared32(param.get_value() * 0.)
-
-            r_new = r + T.sqr(gparam)
-
-            param_new = learning_rate / (T.sqrt(r_new) + 1) * gparam
-
-            updates[r] = r_new
-            updates[param] = param_new
-
-        return updates
-
-    def rmsProp(self, params, gparams, hyper_params):
-        updates = OrderedDict()
-        learning_rate = hyper_params['learning_rate']
-        beta = 0.9
-
-        for param, gparam in zip(params, gparams):
-            r = shared32(param.get_value() * 0.)
-
-            r_new = beta * r + (1 - beta) * T.sqr(gparam)
-
-            param_new = param + learning_rate / (T.sqrt(r_new) + 1) * gparam
-
-            updates[param] = param_new
-            updates[r] = r_new
-        return updates
-
-    def adaDelta(self, params, gparams, hyper_params):
-        learning_rate = hyper_params['learning_rate']
-        beta = 0.9
-
-        for param, gparam in zip(params, gparams):
-            r = shared32(param.get_value() * 0.)
-
-            v = shared32(param.get_value() * 0.)
-
-            s = shared32(param.get_value() * 0.)
-
-            r_new = beta * r + (1 - beta) * T.sqr(gparam)
-
-            v_new = (T.sqrt(s_new) + 1) / (T.sqrt(v) + 1)
-
-            s_new = beta * s + (1 - beta) * T.sqr(v_new)
-
-            param_new = param + v_new
-
-            updates[s] = s_new
-            updates[v] = v_new
-            updates[r] = r_new
-            updates[param] = param_new
-        return updates
-
-    def adam(self, params, gparams, hyper_params):
-        updates = OrderedDict()
-        decay1 = 0.1
-        decay2 = 0.001
-        weight_decay = 1000 / 50000.
-        learning_rate = hyper_params['learning_rate']
-
-        it = shared32(0.)
-        updates[it] = it + 1.
-
-        fix1 = 1. - (1. - decay1) ** (it + 1.)
-        fix2 = 1. - (1. - decay2) ** (it + 1.)
-
-        lr_t = learning_rate * T.sqrt(fix2) / fix1
-
-        for param, gparam in zip(params, gparams):
-            if weight_decay > 0:
-                gparam -= weight_decay * param
-
-            mom1 = shared32(param.get_value(borrow=True) * 0.)
-            mom2 = shared32(param.get_value(borrow=True) * 0.)
-
-            mom1_new = mom1 + decay1 * (gparam - mom1)
-            mom2_new = mom2 + decay2 * (T.sqr(gparam) - mom2)
-
-            effgrad = mom1_new / (T.sqrt(mom2_new) + 1e-10)
-
-            effstep_new = lr_t * effgrad
-
-            param_new = param + effstep_new
-
-            updates[param] = param_new
-            updates[mom1] = mom1_new
-            updates[mom2] = mom2_new
-
-        return updates
-
-
-
-
     def optimize(self, X, x_datas, hyper_params, cost, updates, rng, D_KL, recon_error,z):
         n_iters = hyper_params['n_iters']
         minibatch_size = hyper_params['minibatch_size']
         n_mod_history = hyper_params['n_mod_history']
-        calc_history = hyper_params['calc_history']
 
         train_x = x_datas[:50000]
         valid_x = x_datas[50000:]

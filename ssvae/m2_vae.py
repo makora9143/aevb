@@ -2,40 +2,16 @@
 # -*- coding: utf-8 -*-
 
 
-from collections import OrderedDict
-
 import numpy as np
 import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
 
 from mlp import Layer
-
-def shared32(x):
-    return theano.shared(np.asarray(x).astype(theano.config.floatX))
-
-class M2_VAE(object):
-    def __init__(
-        self,
-        hyper_params=None,
-        optimize_params=None,
-        model_params=None
-    ):
-
-        self.hyper_params = hyper_params
-        self.optimize_params = optimize_params
-        self.model_params = model_params
-
-        self.rng = np.random.RandomState(hyper_params['rng_seed'])
-
-        self.model_params_ = None
-        self.decode_main = None
-        self.encode_main = None
+from vae import Base_VAE
 
 
-    def relu(self, x): return x*(x>0) + 0.01 * x
-    def softplus(self, x): return T.log(T.exp(x) + 1)
-    def identify(self, x): return x
+class M2_VAE(Base_VAE):
 
     def init_model_params(self, dim_x, dim_y):
         print 'M2 model params initialize'
@@ -81,7 +57,6 @@ class M2_VAE(object):
             function=self.identify,
             w_zero=True, b_zero=True
         )
-
 
         # Generate Model
         self.generate_layers = [
@@ -204,7 +179,7 @@ class M2_VAE(object):
         D_KL = T.sum(logpz - logqz)
         recon_error = T.sum(log_p_x_given_z)
 
-        return D_KL, recon_error, log_p_x_given_z.shape
+        return D_KL, recon_error
         # return log_p_x_given_z, logpz, logqz
 
     def fit(self, x_datas, y_labels):
@@ -213,17 +188,15 @@ class M2_VAE(object):
         self.rng_noise = RandomStreams(self.hyper_params['rng_seed'])
         self.init_model_params(dim_x=x_datas.shape[1], dim_y=y_labels.shape[1])
 
-        # logpx, logpz, logqz = self.get_expr_lbound(X)
-        # L = -T.sum(logpx + logpz + logqz)
-        D_KL, recon_error, z = self.get_expr_lbound(X, Y)
+        D_KL, recon_error = self.get_expr_lbound(X, Y)
         L = D_KL + recon_error
-
 
         print 'start fitting'
         gparams = T.grad(
             cost=L,
             wrt=self.model_params_
         )
+
         optimizer = {
             'sgd': self.sgd,
             'adagrad': self.adagrad,
@@ -234,8 +207,8 @@ class M2_VAE(object):
 
         updates = optimizer[self.hyper_params['optimizer']](
             self.model_params_, gparams, self.optimize_params)
-        # self.hist = self.early_stopping(
-        self.hist = self.optimize(
+        self.hist = self.early_stopping(
+        # self.hist = self.optimize(
             X,
             Y,
             x_datas,
@@ -246,120 +219,12 @@ class M2_VAE(object):
             self.rng,
             D_KL,
             recon_error,
-            z
         )
 
-    def sgd(self, params, gparams, hyper_params):
-        learning_rate = hyper_params['learning_rate']
-        updates = OrderedDict()
-
-        for param, gparam in zip(params, gparams):
-            updates[param] = param + learning_rate * gparam
-
-        return updates
-
-    def adagrad(self, params, gparams, hyper_params):
-        updates = OrderedDict()
-        learning_rate = hyper_params['learning_rate']
-
-        for param, gparam in zip(params, gparams):
-            r = shared32(param.get_value() * 0.)
-
-            r_new = r + T.sqr(gparam)
-
-            param_new = learning_rate / (T.sqrt(r_new) + 1) * gparam
-
-            updates[r] = r_new
-            updates[param] = param_new
-
-        return updates
-
-    def rmsProp(self, params, gparams, hyper_params):
-        updates = OrderedDict()
-        learning_rate = hyper_params['learning_rate']
-        beta = 0.9
-
-        for param, gparam in zip(params, gparams):
-            r = shared32(param.get_value() * 0.)
-
-            r_new = beta * r + (1 - beta) * T.sqr(gparam)
-
-            param_new = param + learning_rate / (T.sqrt(r_new) + 1) * gparam
-
-            updates[param] = param_new
-            updates[r] = r_new
-        return updates
-
-    def adaDelta(self, params, gparams, hyper_params):
-        learning_rate = hyper_params['learning_rate']
-        beta = 0.9
-
-        for param, gparam in zip(params, gparams):
-            r = shared32(param.get_value() * 0.)
-
-            v = shared32(param.get_value() * 0.)
-
-            s = shared32(param.get_value() * 0.)
-
-            r_new = beta * r + (1 - beta) * T.sqr(gparam)
-
-            v_new = (T.sqrt(s_new) + 1) / (T.sqrt(v) + 1)
-
-            s_new = beta * s + (1 - beta) * T.sqr(v_new)
-
-            param_new = param + v_new
-
-            updates[s] = s_new
-            updates[v] = v_new
-            updates[r] = r_new
-            updates[param] = param_new
-        return updates
-
-    def adam(self, params, gparams, hyper_params):
-        updates = OrderedDict()
-        decay1 = 0.1
-        decay2 = 0.001
-        weight_decay = 1000 / 50000.
-        learning_rate = hyper_params['learning_rate']
-
-        it = shared32(0.)
-        updates[it] = it + 1.
-
-        fix1 = 1. - (1. - decay1) ** (it + 1.)
-        fix2 = 1. - (1. - decay2) ** (it + 1.)
-
-        lr_t = learning_rate * T.sqrt(fix2) / fix1
-
-        for param, gparam in zip(params, gparams):
-            if weight_decay > 0:
-                gparam -= weight_decay * param
-
-            mom1 = shared32(param.get_value(borrow=True) * 0.)
-            mom2 = shared32(param.get_value(borrow=True) * 0.)
-
-            mom1_new = mom1 + decay1 * (gparam - mom1)
-            mom2_new = mom2 + decay2 * (T.sqr(gparam) - mom2)
-
-            effgrad = mom1_new / (T.sqrt(mom2_new) + 1e-10)
-
-            effstep_new = lr_t * effgrad
-
-            param_new = param + effstep_new
-
-            updates[param] = param_new
-            updates[mom1] = mom1_new
-            updates[mom2] = mom2_new
-
-        return updates
-
-
-
-
-    def optimize(self, X, Y, x_datas, y_labels, hyper_params, cost, updates, rng, D_KL, recon_error,z):
+    def optimize(self, X, Y, x_datas, y_labels, hyper_params, cost, updates, rng, D_KL, recon_error):
         n_iters = hyper_params['n_iters']
         minibatch_size = hyper_params['minibatch_size']
         n_mod_history = hyper_params['n_mod_history']
-        calc_history = hyper_params['calc_history']
 
         train_x = x_datas[:50000]
         valid_x = x_datas[50000:]
@@ -405,49 +270,65 @@ class M2_VAE(object):
                 cost_history.append((i, valid_error))
         return cost_history
 
-    def early_stopping(self, X, x_datas, hyper_params, cost, updates, rng):
-        n_iters = hyper_params['n_iters']
+    def early_stopping(self, X, Y, x_datas, y_labels, hyper_params, cost, updates, rng, D_KL, recon_error):
         minibatch_size = hyper_params['minibatch_size']
         n_mod_history = hyper_params['n_mod_history']
         calc_history = hyper_params['calc_history']
 
+        train_x = x_datas[:50000]
+        valid_x = x_datas[50000:]
+
+        train_y = y_labels[:50000]
+        valid_y = y_labels[50000:]
+
         train = theano.function(
-            inputs=[X],
-            outputs=cost,
+            inputs=[X, Y],
+            outputs=[cost, D_KL, recon_error],
             updates=updates
         )
 
         validate = theano.function(
-            inputs=[X],
-            outputs=cost
+            inputs=[X, Y],
+            outputs=cost,
         )
 
-        n_samples = x_datas.shape[0]
+        n_samples = train_x.shape[0]
         cost_history = []
-        best_params = []
-        valid_best_error = np.inf
+        best_params = None
+        valid_best_error = - np.inf
         best_iter = 0
-        patient = 0
+        patience = 5000
+        patience_increase = 2
+        improvement_threshold = 1.005
+
+        done_looping = False
 
         for i in xrange(1000000):
-            ixs = rng.permutation(n_samples)[:minibatch_size]
-            minibatch_cost = train(x_datas[ixs])
-            if np.mod(i, n_mod_history) == 0:
-                print '%d epoch error: %f' % (i, minibatch_cost)
-                if calc_history == 'minibatch':
-                    cost_history.append((i, minibatch_cost))
-                else:
-                    cost_history.append((i, validate(x_datas[ixs])))
-                valid_cost = validate(x_datas)
-                if valid_cost < valid_best_error:
-                    patient = 0
-                    best_params = self.model_params_
-                    best_iter = i
-                else:
-                    patient += 1
-                if patient > 1000:
+            if done_looping: break
+            ixs = rng.permutation(n_samples)
+            for j in xrange(0, n_samples, minibatch_size):
+                cost, D_KL, recon_error = train(train_x[ixs[j:j+minibatch_size]], train_y[ixs[j:j+minibatch_size]])
+
+                iter = i * (n_samples / minibatch_size) + minibatch_size
+
+                if np.mod(i, n_mod_history) == 0:
+                    # print ('epoch %d, minibatch %d/%d, train D_KL error: %.3f, Reconstruction error: %.3f, total error: %.3f' %
+                    #   (i, D_KL, recon_error, cost))
+                    valid_error = 0.
+                    for _ in xrange(3):
+                        valid_error += validate(valid_x, valid_y)
+                    valid_error /= 3
+                    print 'epoch %d, minibatch %d/%d, valid total error: %.3f' % (i, j / minibatch_size, n_samples / minibatch_size, valid_error)
+                    cost_history.append((i, valid_error))
+                    if valid_error > valid_best_error:
+                        if valid_error > valid_best_error * improvement_threshold:
+                            patience = max(patience, iter * patience_increase)
+                        best_params = self.model_params_
+                        valid_best_error = valid_error
+
+                if patience <= iter:
+                    done_looping = True
                     break
-        self.model_params_ = best_params
         return cost_history
 
 
