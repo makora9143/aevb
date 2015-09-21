@@ -311,12 +311,13 @@ class M2_VAE(Base_VAE):
 
                 iter = i * (n_samples / minibatch_size) + j / minibatch_size
 
-                if (iter) % 50 == 0:
+                if (iter+1) % 50 == 0:
                     valid_error = 0.
                     for _ in xrange(3):
                         valid_error += validate(valid_x, valid_y)
                     valid_error /= 3
-                    print 'epoch %d, minibatch %d/%d, valid total error: %.3f' % (i, j / minibatch_size + 1, n_samples / minibatch_size, valid_error)
+                    if i % 100 == 0:
+                        print 'epoch %d, minibatch %d/%d, valid total error: %.3f' % (i, j / minibatch_size + 1, n_samples / minibatch_size, valid_error)
                     cost_history.append((i*j, valid_error))
                     if valid_error > valid_best_error:
                         if valid_error > valid_best_error * improvement_threshold:
