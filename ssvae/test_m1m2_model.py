@@ -66,13 +66,13 @@ def test_vae(
     z1s = m1model.encode(xs)
 
     m2model.fit(z1s, ys)
-    z2s = m2model.encode(z1s, ys)
-    z1_recon = m2model.decode(z2s, ys)
+    # z2s = m2model.encode(z1s, ys)
+    # z1_recon = m2model.decode(z2s, ys)
 
-    xs_recon = m1model.decode(z1_recon)
+    # xs_recon = m1model.decode(z1_recon)
 
-    err = np.sum(0.5 * (xs - xs_recon) ** 2) / xs.shape[0]
-    print ('Error: %f' % err)
+    # err = np.sum(0.5 * (xs - xs_recon) ** 2) / xs.shape[0]
+    # print ('Error: %f' % err)
 
     return datasets, m1model, m2model
 
