@@ -15,13 +15,23 @@ def shared32(x):
 
 
 class Base_VAE(object):
-
     def __init__(
         self,
         hyper_params=None,
         optimize_params=None,
-        model_params=None
+        model_params=None,
+        model_name=None
     ):
+        print model_name, "Model is initialize"
+        print '\tlearning_rate:', optimize_params['learning_rate']
+        print '\tminibatches:', optimize_params['minibatch_size']
+        print '\toptimizer:', hyper_params['optimizer']
+        print '\tlearn by:', hyper_params['learning_process']
+        print '\tnon linear q:', hyper_params['nonlinear_q']
+        print '\tnon linear p:', hyper_params['nonlinear_p']
+        print '\ttype px:', hyper_params['type_px']
+
+        self.model_name = model_name
 
         self.hyper_params = hyper_params
         self.optimize_params = optimize_params
@@ -36,6 +46,7 @@ class Base_VAE(object):
     def relu(self, x): return x*(x>0) + 0.01 * x
     def softplus(self, x): return T.log(T.exp(x) + 1)
     def identify(self, x): return x
+    def get_name(self): return self.model_name
 
     def sgd(self, params, gparams, hyper_params):
         learning_rate = hyper_params['learning_rate']

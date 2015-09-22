@@ -8,6 +8,7 @@ import theano
 from scipy import misc
 
 from utils import load_data
+from m1_vae import M1_VAE
 from m2_vae import M2_VAE
 
 datasets = load_data('../../20150717-/mnist.pkl.gz')
@@ -57,27 +58,36 @@ def test_vae(
     }
     all_params.update({'optimize_params': optimize_params})
 
-    model = M2_VAE(**all_params)
-    model.fit(xs, ys)
-    zs = model.encode(xs, ys)
-    xs_recon = model.decode(zs, ys)
+    m1model = M1_VAE(**all_params)
+    m2model = M2_VAE(**all_params)
+
+
+    m1model.fit(xs)
+    z1s = m1model.encode(xs)
+
+    m2model.fit(z1s, ys)
+    z2s = m2model.encode(z1s, ys)
+    z1_recon = m2model.decode(z2s, ys)
+
+    xs_recon = m1model.decode(z1_recon)
 
     err = np.sum(0.5 * (xs - xs_recon) ** 2) / xs.shape[0]
     print ('Error: %f' % err)
 
-    return datasets, model
+    return datasets, m1model, m2model
 
 if __name__ == '__main__':
-    data, model = test_vae(
+    data, m1model, m2model = test_vae(
         n_iters=1000,
         learning_rate=0.001,
         n_mc_samples=1,
         scale_init=1.,
         dim_z=50,
     )
-    hist = np.vstack(model.hist)
-    plt.plot(hist[:, 0], hist[:, 1])
-    # print model.encode(xs[0], ys[0])
+    m1hist = np.vstack(m1model.hist)
+    plt.plot(m1hist[:, 0], m1hist[:, 1], 'b')
+    m2hist = np.vstack(m2model.hist)
+    plt.plot(m2hist[:, 0], m2hist[:, 1], 'r')
 
     size = 28
     im_size = (28, 28)
@@ -87,13 +97,15 @@ if __name__ == '__main__':
         testX = [xs[idx]]
         output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*(0):im_size[1]*(1)] = np.array(testX).reshape(im_size)
         testY = [ys[idx]]
-        testZ = model.encode(testX, testY)
+        testZ1 = m1model.encode(testX)
+        testZ2 = m2model.encode(testZ1, testY)
         for j in range(ys.shape[1]):
             sampleY = np.zeros((1, ys.shape[1])).astype(np.float32)
             sampleY[0][j] = 1.
-            im = model.decode(testZ, sampleY).reshape(im_size)
+            testZ1 = m2model.decode(testZ2, sampleY)
+            im = m1model.decode(testZ1).reshape(im_size)
             output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*(j+1):im_size[1]*(j+2)] = im
-    misc.imsave('sample' + model.get_name() + '.jpg', output_image)
+    misc.imsave('sample' + m1model.get_name() + m2model.get_name() + '.jpg', output_image)
 
     plt.show()
 # End of Line.

@@ -12,6 +12,18 @@ from vae import Base_VAE
 
 
 class M2_VAE(Base_VAE):
+    def __init__(
+            self,
+            hyper_params=None,
+            optimize_params=None,
+            model_params=None
+        ):
+        super(M2_VAE, self).__init__(
+            hyper_params,
+            optimize_params,
+            model_params,
+            model_name='M2'
+            )
 
     def init_model_params(self, dim_x, dim_y):
         print 'M2 model params initialize'

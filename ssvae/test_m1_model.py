@@ -32,6 +32,9 @@ def test_vae(
         'calc_hist'     : 'all',
         'n_mod_history'    : 100,
         'n_mod_hist'    : 100,
+        'patience'      : 5000,
+        'patience_increase': 2,
+        'improvement_threshold': 1.005,
     }
 
     all_params = {
@@ -44,7 +47,8 @@ def test_vae(
             'nonlinear_q'       : 'relu',
             'nonlinear_p'       : 'relu',
             'type_px'           : 'bernoulli',
-            'optimizer'         : 'adam'
+            'optimizer'         : 'adam',
+            'learning_process'  : 'early_stopping'
         }
     }
     all_params.update({'optimize_params': optimize_params})
@@ -69,7 +73,6 @@ if __name__ == '__main__':
         )
     hist = np.vstack(model.hist)
     plt.plot(hist[:, 0], hist[:, 1])
-    # print model.encode(xs[0], ys[0])
 
     size = 28
     im_size = (28, 28)
@@ -80,8 +83,7 @@ if __name__ == '__main__':
             sampleZ = np.random.standard_normal((1, 50)).astype(np.float32)
             im = model.decode(sampleZ).reshape(im_size)
             output_image[im_size[0]*i: im_size[0]*(i+1), im_size[1]*j:im_size[1]*(j+1)] = im
-    misc.imsave('sampleM1.jpg', output_image)
-
+    misc.imsave('sample_'+ model.get_name() +'.jpg', output_image)
 
     plt.show()
 # End of Line.
