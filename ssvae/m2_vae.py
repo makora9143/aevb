@@ -272,8 +272,6 @@ class M2_VAE(Base_VAE):
 
     def early_stopping(self, X, Y, x_datas, y_labels, hyper_params, cost, updates, rng, D_KL, recon_error):
         minibatch_size = hyper_params['minibatch_size']
-        n_mod_history = hyper_params['n_mod_history']
-        calc_history = hyper_params['calc_history']
 
         train_x = x_datas[:50000]
         valid_x = x_datas[50000:]
@@ -296,7 +294,7 @@ class M2_VAE(Base_VAE):
         cost_history = []
         best_params = None
         valid_best_error = - np.inf
-        best_iter = 0
+        best_epoch = 0
         patience = 5000
         patience_increase = 2
         improvement_threshold = 1.005
@@ -324,10 +322,13 @@ class M2_VAE(Base_VAE):
                             patience = max(patience, iter * patience_increase)
                         best_params = self.model_params_
                         valid_best_error = valid_error
+                        best_epoch = i
 
                 if patience <= iter:
                     done_looping = True
                     break
+        self.model_params_ = best_params
+        print 'epoch %d, minibatch %d/%d, valid total error: %.3f' % (best_epoch, j / minibatch_size + 1, n_samples / minibatch_size, valid_best_error)
         return cost_history
 
 

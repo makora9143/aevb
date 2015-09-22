@@ -298,29 +298,42 @@ class M1_VAE(Base_VAE):
 
         n_samples = x_datas.shape[0]
         cost_history = []
-        best_params = []
-        valid_best_error = np.inf
-        best_iter = 0
-        patient = 0
+        best_params = None
+        valid_best_error = - np.inf
+        best_epoch = 0
+        patience = 5000
+        patience_increase = 2
+        improvement_threshold = 1.005
+
+        done_looping = False
 
         for i in xrange(1000000):
-            ixs = rng.permutation(n_samples)[:minibatch_size]
-            minibatch_cost = train(x_datas[ixs])
-            if np.mod(i, n_mod_history) == 0:
-                print '%d epoch error: %f' % (i, minibatch_cost)
-                if calc_history == 'minibatch':
-                    cost_history.append((i, minibatch_cost))
-                else:
-                    cost_history.append((i, validate(x_datas[ixs])))
-                valid_cost = validate(x_datas)
-                if valid_cost < valid_best_error:
-                    patient = 0
-                    best_params = self.model_params_
-                    best_iter = i
-                else:
-                    patient += 1
-                if patient > 1000:
+            if done_looping: break
+            ixs = rng.permutation(n_samples)
+            for j in xrange(0, n_samples, minibatch_size):
+                cost, D_KL, recon_error = train(train_x[ixs[j:j+minibatch_size]])
+
+                iter = i * (n_samples / minibatch_size) + j / minibatch_size
+
+                if (iter+1) % 50 == 0:
+                    valid_error = 0.
+                    for _ in xrange(3):
+                        valid_error += validate(valid_x)
+                    valid_error /= 3
+                    if i % 100 == 0:
+                        print 'epoch %d, minibatch %d/%d, valid total error: %.3f' % (i, j / minibatch_size + 1, n_samples / minibatch_size, valid_error)
+                    cost_history.append((i*j, valid_error))
+                    if valid_error > valid_best_error:
+                        if valid_error > valid_best_error * improvement_threshold:
+                            patience = max(patience, iter * patience_increase)
+                        best_params = self.model_params_
+                        valid_best_error = valid_error
+                        best_epoch = i
+
+                if patience <= iter:
+                    done_looping = True
                     break
+        print 'epoch %d, minibatch %d/%d, valid total error: %.3f' % (best_epoch, j / minibatch_size + 1, n_samples / minibatch_size, valid_best_error)
         self.model_params_ = best_params
         return cost_history
 
